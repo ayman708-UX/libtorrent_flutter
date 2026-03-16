@@ -6,7 +6,7 @@ Pod::Spec.new do |s|
   Native libtorrent 2.0 bindings for Flutter with an integrated HTTP streaming server.
                        DESC
   s.homepage         = 'https://github.com/ayman708-UX/libtorrent_flutter'
-  s.license          = { :type => 'MIT', :file => '../LICENSE' }
+  s.license          = { :type => 'GPL-3.0', :file => '../LICENSE' }
   s.author           = { 'ayman708-UX' => 'ayman@example.com' }
   s.source           = { :path => '.' }
 

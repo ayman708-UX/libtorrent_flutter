@@ -329,10 +329,151 @@ jobs:
           retention-days: 90
 
   # ═══════════════════════════════════════════════════════════════════════════════
+  # iOS BUILD (static library, arm64 + x86_64 simulator)
+  # ═══════════════════════════════════════════════════════════════════════════════
+  build-ios:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install boost cmake ninja
+
+      - name: Build libtorrent for iOS arm64 (no encryption)
+        run: |
+          git clone --depth 1 --branch v${LIBTORRENT_VERSION} \
+            --recurse-submodules https://github.com/arvidn/libtorrent.git libtorrent-src
+          cd libtorrent-src && mkdir build-ios && cd build-ios
+
+          # iOS arm64 — device
+          IOS_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          cmake .. \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_SYSROOT=$IOS_SDK \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DBUILD_SHARED_LIBS=OFF \
+            -Ddeprecated-functions=OFF \
+            -Dencryption=OFF \
+            -DBOOST_ROOT=$(brew --prefix boost) \
+            -DBoost_INCLUDE_DIR=$(brew --prefix boost)/include \
+            -G Ninja -Wno-dev
+          ninja -j$(sysctl -n hw.ncpu)
+          echo "=== iOS arm64 static lib ==="
+          find . -name "*.a" | head -5
+        timeout-minutes: 20
+
+      - name: Build torrent_bridge for iOS arm64
+        run: |
+          LT_LIB=$(find libtorrent-src/build-ios -name "libtorrent-rasterbar.a" | head -1)
+          BOOST_INC=$(brew --prefix boost)/include
+          IOS_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          echo "libtorrent lib: $LT_LIB"
+
+          mkdir -p build-ios-arm64
+          clang++ -c -O2 -std=c++17 -fPIC \
+            -target arm64-apple-ios13.0 \
+            -isysroot $IOS_SDK \
+            -DTORRENT_BRIDGE_EXPORTS \
+            -DTORRENT_NO_DEPRECATE \
+            -DTORRENT_USE_SSL=0 \
+            -DBOOST_NO_IOSTREAM \
+            -Ilibtorrent-src/include \
+            -Ilibtorrent-src/build-ios/include \
+            -I${BOOST_INC} \
+            -o build-ios-arm64/torrent_bridge.o \
+            src/torrent_bridge.cpp
+
+          # Create a fat static library: our bridge + libtorrent
+          cp "$LT_LIB" build-ios-arm64/libtorrent-rasterbar.a
+          ar x build-ios-arm64/libtorrent-rasterbar.a
+          # Move extracted objects to avoid name collisions
+          mkdir -p build-ios-arm64/lt_objects
+          mv *.o build-ios-arm64/lt_objects/ 2>/dev/null || true
+          ar rcs build-ios-arm64/liblibtorrent_flutter.a \
+            build-ios-arm64/torrent_bridge.o \
+            build-ios-arm64/lt_objects/*.o
+
+          ls -la build-ios-arm64/liblibtorrent_flutter.a
+          echo "✅ iOS arm64 static build succeeded"
+
+      - name: Build libtorrent for iOS Simulator x86_64
+        run: |
+          cd libtorrent-src && mkdir build-sim && cd build-sim
+
+          SIM_SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
+          cmake .. \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DCMAKE_OSX_SYSROOT=$SIM_SDK \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DBUILD_SHARED_LIBS=OFF \
+            -Ddeprecated-functions=OFF \
+            -Dencryption=OFF \
+            -DBOOST_ROOT=$(brew --prefix boost) \
+            -DBoost_INCLUDE_DIR=$(brew --prefix boost)/include \
+            -G Ninja -Wno-dev
+          ninja -j$(sysctl -n hw.ncpu)
+        timeout-minutes: 20
+
+      - name: Build torrent_bridge for iOS Simulator x86_64
+        run: |
+          LT_LIB=$(find libtorrent-src/build-sim -name "libtorrent-rasterbar.a" | head -1)
+          BOOST_INC=$(brew --prefix boost)/include
+          SIM_SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
+
+          mkdir -p build-ios-sim
+          clang++ -c -O2 -std=c++17 -fPIC \
+            -target x86_64-apple-ios13.0-simulator \
+            -isysroot $SIM_SDK \
+            -DTORRENT_BRIDGE_EXPORTS \
+            -DTORRENT_NO_DEPRECATE \
+            -DTORRENT_USE_SSL=0 \
+            -DBOOST_NO_IOSTREAM \
+            -Ilibtorrent-src/include \
+            -Ilibtorrent-src/build-sim/include \
+            -I${BOOST_INC} \
+            -o build-ios-sim/torrent_bridge.o \
+            src/torrent_bridge.cpp
+
+          cp "$LT_LIB" build-ios-sim/libtorrent-rasterbar.a
+          ar x build-ios-sim/libtorrent-rasterbar.a
+          mkdir -p build-ios-sim/lt_objects
+          mv *.o build-ios-sim/lt_objects/ 2>/dev/null || true
+          ar rcs build-ios-sim/liblibtorrent_flutter.a \
+            build-ios-sim/torrent_bridge.o \
+            build-ios-sim/lt_objects/*.o
+
+          echo "✅ iOS Simulator x86_64 static build succeeded"
+
+      - name: Create universal static library with lipo
+        run: |
+          mkdir -p prebuilt/ios
+          lipo -create \
+            build-ios-arm64/liblibtorrent_flutter.a \
+            build-ios-sim/liblibtorrent_flutter.a \
+            -output prebuilt/ios/liblibtorrent_flutter.a
+
+          lipo -info prebuilt/ios/liblibtorrent_flutter.a
+          ls -la prebuilt/ios/
+          echo "✅ Universal iOS static library created"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-native-lib
+          path: prebuilt/ios/
+          retention-days: 90
+
+  # ═══════════════════════════════════════════════════════════════════════════════
   # BUNDLE — auto-commit prebuilt binaries back to repo
   # ═══════════════════════════════════════════════════════════════════════════════
   bundle-prebuilt:
-    needs: [build-linux, build-macos, build-windows, build-android]
+    needs: [build-linux, build-macos, build-windows, build-android, build-ios]
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
     permissions:
@@ -354,6 +495,7 @@ jobs:
           mkdir -p prebuilt/android/arm64-v8a
           mkdir -p prebuilt/android/armeabi-v7a
           mkdir -p prebuilt/android/x86_64
+          mkdir -p prebuilt/ios
 
           cp artifacts/linux-native-lib/x64/* prebuilt/linux/x64/ 2>/dev/null || true
           cp artifacts/macos-native-lib/universal/* prebuilt/macos/universal/ 2>/dev/null || true
@@ -361,19 +503,24 @@ jobs:
           cp artifacts/android-native-lib-arm64-v8a/* prebuilt/android/arm64-v8a/ 2>/dev/null || true
           cp artifacts/android-native-lib-armeabi-v7a/* prebuilt/android/armeabi-v7a/ 2>/dev/null || true
           cp artifacts/android-native-lib-x86_64/* prebuilt/android/x86_64/ 2>/dev/null || true
+          cp artifacts/ios-native-lib/* prebuilt/ios/ 2>/dev/null || true
 
           # Copy macOS dylib to macos/ for CocoaPods vendored_libraries
           cp prebuilt/macos/universal/liblibtorrent_flutter.dylib macos/ 2>/dev/null || true
 
+          # Copy iOS static lib to ios/ for CocoaPods vendored_libraries
+          cp prebuilt/ios/liblibtorrent_flutter.a ios/ 2>/dev/null || true
+
           echo "=== Prebuilt libs ==="
           find prebuilt -type f -exec ls -lh {} \;
           ls -la macos/*.dylib 2>/dev/null || true
+          ls -la ios/*.a 2>/dev/null || true
 
       - name: Commit prebuilt libraries
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git add prebuilt/ macos/liblibtorrent_flutter.dylib
+          git add prebuilt/ macos/liblibtorrent_flutter.dylib ios/liblibtorrent_flutter.a
           git diff --cached --quiet && echo "No changes" || (
             git commit -m "ci: update prebuilt native libraries [skip ci]"
             git push
@@ -407,7 +554,7 @@ jobs:
               cd "$dir" && zip -r "../../release-assets/${dir}.zip" . && cd ..
             fi
           done
-          for dir in android-native-lib-arm64-v8a android-native-lib-armeabi-v7a android-native-lib-x86_64; do
+          for dir in android-native-lib-arm64-v8a android-native-lib-armeabi-v7a android-native-lib-x86_64 ios-native-lib; do
             if [ -d "$dir" ]; then
               cd "$dir" && zip -r "../../release-assets/${dir}.zip" . && cd ..
             fi

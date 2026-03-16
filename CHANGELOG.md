@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.0
+
+- **Platform**: Added iOS support (arm64 device + x86_64 simulator, universal static library)
+- **CI**: New `build-ios` job cross-compiles libtorrent + torrent_bridge as a static `.a` for iOS, merged with `lipo`
+- **Packaging**: iOS podspec with `-force_load` so all FFI symbols are visible via `DynamicLibrary.process()`
+
 ## 1.2.0
 
 - **License**: Switched to GPL v3 (OSI-approved)
