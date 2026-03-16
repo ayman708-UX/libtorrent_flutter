@@ -18,7 +18,6 @@ pubspec.lock
 # macOS
 .DS_Store
 /macos/Pods/
-/macos/*.dylib
 /macos/*.xcworkspace/
 /macos/*.xcodeproj/
 
