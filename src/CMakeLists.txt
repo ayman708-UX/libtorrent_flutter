@@ -1,6 +1,7 @@
 # src/CMakeLists.txt — Shared build for torrent_bridge native library
 
 cmake_minimum_required(VERSION 3.14)
+cmake_policy(SET CMP0091 NEW)
 project(libtorrent_flutter_native LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
