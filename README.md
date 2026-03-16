@@ -207,5 +207,4 @@ The stream URL works with any player that handles HTTP range requests.
 
 ## License
 
-Source Available — see [LICENSE](LICENSE).  
-You can use this package freely in your apps. You may not modify, fork, or redistribute the source code.
+GPL v3
