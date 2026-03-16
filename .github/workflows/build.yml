@@ -84,9 +84,11 @@ jobs:
           mkdir -p build-macos
 
           # Build directly with clang++ — bypasses cmake entirely
+          # NOTE: Do NOT add -DTORRENT_NO_DEPRECATE here!
+          # Homebrew's libtorrent uses ABI v1 (no v2:: namespace).
+          # TORRENT_NO_DEPRECATE sets ABI v4 (v2:: namespace) = symbol mismatch.
           clang++ -shared -fPIC -O2 -std=c++17 \
             -DTORRENT_BRIDGE_EXPORTS \
-            -DTORRENT_NO_DEPRECATE \
             $(pkg-config --cflags libtorrent-rasterbar) \
             -I${BOOST_INC} \
             -I${OPENSSL_INC} \

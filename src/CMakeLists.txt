@@ -13,8 +13,14 @@ add_library(libtorrent_flutter SHARED
 
 target_compile_definitions(libtorrent_flutter PRIVATE
     TORRENT_BRIDGE_EXPORTS
-    TORRENT_NO_DEPRECATE
 )
+
+# TORRENT_NO_DEPRECATE changes ABI version (v2:: namespace).
+# Only use it when building libtorrent from source (Android).
+# System libraries (Homebrew, apt, vcpkg) use ABI v1 = no v2:: namespace.
+if(ANDROID)
+    target_compile_definitions(libtorrent_flutter PRIVATE TORRENT_NO_DEPRECATE)
+endif()
 
 # ── Platform-specific linking ──────────────────────────────────────────────────
 
