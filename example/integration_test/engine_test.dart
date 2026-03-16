@@ -25,7 +25,7 @@ void main() {
 
     // Test a real magnet link (Ubuntu Server 23.10 as an example or Big Buck Bunny)
     // We'll use Big Buck Bunny since it's universally highly seeded and small/legal.
-    const magnetUri = 'magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny';
+    const magnetUri = 'magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny'\n        '&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce'\n        '&tr=udp%3A%2F%2F9.rarbg.com%3A2810%2Fannounce'\n        '&tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A80%2Fannounce'\n        '&tr=http%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce';
     final savePath = Directory.systemTemp.createTempSync('lt_test_').path;
 
     final torrentId = LibtorrentFlutter.instance.addMagnet(magnetUri, savePath);
@@ -39,8 +39,8 @@ void main() {
       }
     });
 
-    // Poll for up to 25 seconds (DHT + peer discovery can take a moment)
-    for (int i = 0; i < 50; i++) {
+    // Poll for up to 40 seconds (DHT + peer discovery can take a moment)
+    for (int i = 0; i < 80; i++) {
       if (hasMetadata) break;
       await Future.delayed(const Duration(milliseconds: 500));
     }
