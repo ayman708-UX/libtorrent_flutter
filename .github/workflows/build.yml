@@ -71,25 +71,37 @@ jobs:
 
       - name: Build native library
         run: |
-          LT_PREFIX=$(brew --prefix libtorrent-rasterbar)
-          BOOST_PREFIX=$(brew --prefix boost)
-          OPENSSL_PREFIX=$(brew --prefix openssl)
+          # Get all paths from Homebrew
+          BOOST_INC=$(brew --prefix boost)/include
+          OPENSSL_INC=$(brew --prefix openssl)/include
 
-          mkdir -p build-macos && cd build-macos
-          cmake ../src \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-            -DCMAKE_PREFIX_PATH="${LT_PREFIX};${BOOST_PREFIX};${OPENSSL_PREFIX}" \
-            -DBOOST_ROOT="${BOOST_PREFIX}" \
-            -DBoost_INCLUDE_DIR="${BOOST_PREFIX}/include" \
-            -DOPENSSL_ROOT_DIR="${OPENSSL_PREFIX}" \
-            -Wno-dev
-          cmake --build . --config Release -j$(sysctl -n hw.ncpu)
+          # Debug: show what pkg-config gives us
+          echo "=== pkg-config cflags ==="
+          pkg-config --cflags libtorrent-rasterbar
+          echo "=== pkg-config libs ==="
+          pkg-config --libs libtorrent-rasterbar
+
+          mkdir -p build-macos
+
+          # Build directly with clang++ — bypasses cmake entirely
+          clang++ -shared -fPIC -O2 -std=c++17 \
+            -DTORRENT_BRIDGE_EXPORTS \
+            -DTORRENT_NO_DEPRECATE \
+            $(pkg-config --cflags libtorrent-rasterbar) \
+            -I${BOOST_INC} \
+            -I${OPENSSL_INC} \
+            -o build-macos/libtorrent_flutter.dylib \
+            src/torrent_bridge.cpp \
+            $(pkg-config --libs libtorrent-rasterbar) \
+            -install_name @rpath/libtorrent_flutter.dylib
+
+          ls -la build-macos/libtorrent_flutter.dylib
+          echo "✅ macOS build succeeded"
 
       - name: Copy to prebuilt
         run: |
           mkdir -p prebuilt/macos/universal
-          find build-macos -name "*.dylib" -exec cp {} prebuilt/macos/universal/ \;
+          cp build-macos/libtorrent_flutter.dylib prebuilt/macos/universal/
           ls -la prebuilt/macos/universal/
 
       - name: Setup Flutter
