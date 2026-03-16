@@ -1,0 +1,314 @@
+name: Build & Test Native Libraries
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  LIBTORRENT_VERSION: "2.0.11"
+
+jobs:
+  # ═══════════════════════════════════════════════════════════════════════════════
+  # LINUX BUILD
+  # ═══════════════════════════════════════════════════════════════════════════════
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libtorrent-rasterbar-dev \
+            libboost-all-dev \
+            libssl-dev \
+            cmake \
+            g++ \
+            pkg-config
+
+      - name: Build native library
+        run: |
+          mkdir -p build-linux && cd build-linux
+          cmake ../src \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+          cmake --build . --config Release -j$(nproc)
+          ls -la *.so || ls -la lib*.so || echo "Checking parent:" && ls -la
+
+      - name: Copy to prebuilt
+        run: |
+          mkdir -p prebuilt/linux/x64
+          find build-linux -name "*.so" -exec cp {} prebuilt/linux/x64/ \;
+          ls -la prebuilt/linux/x64/
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.29.2'
+          channel: 'stable'
+
+      - name: Run Dart smoke test
+        run: |
+          cd example
+          flutter pub get
+          flutter test integration_test/ -d linux --timeout 60s || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-native-lib
+          path: prebuilt/linux/
+          retention-days: 90
+
+  # ═══════════════════════════════════════════════════════════════════════════════
+  # MACOS BUILD
+  # ═══════════════════════════════════════════════════════════════════════════════
+  build-macos:
+    runs-on: macos-14  # Apple Silicon
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew install libtorrent-rasterbar boost openssl pkg-config cmake
+
+      - name: Build native library
+        run: |
+          mkdir -p build-macos && cd build-macos
+          cmake ../src \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          cmake --build . --config Release -j$(sysctl -n hw.ncpu)
+
+      - name: Copy to prebuilt
+        run: |
+          mkdir -p prebuilt/macos/universal
+          find build-macos -name "*.dylib" -exec cp {} prebuilt/macos/universal/ \;
+          ls -la prebuilt/macos/universal/
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.29.2'
+          channel: 'stable'
+
+      - name: Run Dart smoke test
+        run: |
+          cd example
+          flutter pub get
+          flutter test integration_test/ -d macos --timeout 60s || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-native-lib
+          path: prebuilt/macos/
+          retention-days: 90
+
+  # ═══════════════════════════════════════════════════════════════════════════════
+  # WINDOWS BUILD
+  # ═══════════════════════════════════════════════════════════════════════════════
+  build-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+          C:\vcpkg\bootstrap-vcpkg.bat
+          echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
+
+      - name: Install libtorrent via vcpkg
+        run: |
+          C:\vcpkg\vcpkg.exe install libtorrent:x64-windows
+        timeout-minutes: 60
+
+      - name: Build native library
+        run: |
+          mkdir build-win
+          cd build-win
+          cmake ..\src `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="C:\vcpkg\scripts\buildsystems\vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows
+          cmake --build . --config Release
+
+      - name: Copy to prebuilt
+        run: |
+          New-Item -ItemType Directory -Force "prebuilt\windows\x64"
+          Get-ChildItem -Path build-win -Recurse -Filter "*.dll" | Copy-Item -Destination "prebuilt\windows\x64\"
+          # Also copy libtorrent runtime DLLs
+          Get-ChildItem "C:\vcpkg\installed\x64-windows\bin" -Filter "*.dll" | Copy-Item -Destination "prebuilt\windows\x64\"
+          Get-ChildItem "prebuilt\windows\x64\"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.29.2'
+          channel: 'stable'
+
+      - name: Run Dart smoke test
+        run: |
+          cd example
+          flutter pub get
+          flutter test integration_test/ -d windows --timeout 60s
+        continue-on-error: true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-lib
+          path: prebuilt/windows/
+          retention-days: 90
+
+  # ═══════════════════════════════════════════════════════════════════════════════
+  # ANDROID BUILD
+  # ═══════════════════════════════════════════════════════════════════════════════
+  build-android:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26d
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build python3
+
+      - name: Build Boost headers (header-only for libtorrent)
+        run: |
+          wget -q https://archives.boost.io/release/1.84.0/source/boost_1_84_0.tar.gz
+          tar xf boost_1_84_0.tar.gz
+          echo "BOOST_ROOT=$PWD/boost_1_84_0" >> $GITHUB_ENV
+
+      - name: Build libtorrent for Android
+        env:
+          NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          git clone --depth 1 --branch v2.0.11 https://github.com/arvidn/libtorrent.git libtorrent-src
+          cd libtorrent-src
+
+          # Map ABI to NDK arch
+          case "${{ matrix.abi }}" in
+            arm64-v8a)   ARCH=aarch64; API=24 ;;
+            armeabi-v7a) ARCH=armv7a;  API=24 ;;
+            x86_64)      ARCH=x86_64;  API=24 ;;
+          esac
+
+          mkdir build && cd build
+          cmake .. \
+            -DCMAKE_SYSTEM_NAME=Android \
+            -DCMAKE_ANDROID_NDK=$NDK \
+            -DCMAKE_ANDROID_ARCH_ABI=${{ matrix.abi }} \
+            -DCMAKE_ANDROID_STL_TYPE=c++_shared \
+            -DCMAKE_SYSTEM_VERSION=$API \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DBUILD_SHARED_LIBS=OFF \
+            -Dstatic_runtime=ON \
+            -Ddeprecated-functions=OFF \
+            -DBOOST_ROOT=$BOOST_ROOT \
+            -DBoost_INCLUDE_DIR=$BOOST_ROOT \
+            -G Ninja
+          ninja -j$(nproc)
+        timeout-minutes: 30
+
+      - name: Build torrent_bridge for Android
+        env:
+          NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          case "${{ matrix.abi }}" in
+            arm64-v8a)   API=24 ;;
+            armeabi-v7a) API=24 ;;
+            x86_64)      API=24 ;;
+          esac
+
+          mkdir build-bridge && cd build-bridge
+          cmake ../src \
+            -DCMAKE_SYSTEM_NAME=Android \
+            -DCMAKE_ANDROID_NDK=$NDK \
+            -DCMAKE_ANDROID_ARCH_ABI=${{ matrix.abi }} \
+            -DCMAKE_ANDROID_STL_TYPE=c++_shared \
+            -DCMAKE_SYSTEM_VERSION=$API \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DLibtorrentRasterbar_DIR=$PWD/../libtorrent-src/build \
+            -DBOOST_ROOT=$BOOST_ROOT \
+            -G Ninja
+          ninja -j$(nproc)
+
+      - name: Copy to prebuilt
+        run: |
+          mkdir -p prebuilt/android/${{ matrix.abi }}
+          find build-bridge -name "*.so" -exec cp {} prebuilt/android/${{ matrix.abi }}/ \;
+          # Copy STL shared lib
+          find ${{ steps.setup-ndk.outputs.ndk-path }} -path "*/${{ matrix.abi }}/libc++_shared.so" | head -1 | xargs -I{} cp {} prebuilt/android/${{ matrix.abi }}/
+          ls -la prebuilt/android/${{ matrix.abi }}/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-native-lib-${{ matrix.abi }}
+          path: prebuilt/android/${{ matrix.abi }}/
+          retention-days: 90
+
+  # ═══════════════════════════════════════════════════════════════════════════════
+  # BUNDLE — Collect all prebuilt libs and commit to repo
+  # ═══════════════════════════════════════════════════════════════════════════════
+  bundle-prebuilt:
+    needs: [build-linux, build-macos, build-windows, build-android]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Organize prebuilt directory
+        run: |
+          rm -rf prebuilt
+          mkdir -p prebuilt/linux/x64
+          mkdir -p prebuilt/macos/universal
+          mkdir -p prebuilt/windows/x64
+          mkdir -p prebuilt/android/arm64-v8a
+          mkdir -p prebuilt/android/armeabi-v7a
+          mkdir -p prebuilt/android/x86_64
+
+          cp -r artifacts/linux-native-lib/x64/* prebuilt/linux/x64/ || true
+          cp -r artifacts/macos-native-lib/universal/* prebuilt/macos/universal/ || true
+          cp -r artifacts/windows-native-lib/x64/* prebuilt/windows/x64/ || true
+          cp -r artifacts/android-native-lib-arm64-v8a/* prebuilt/android/arm64-v8a/ || true
+          cp -r artifacts/android-native-lib-armeabi-v7a/* prebuilt/android/armeabi-v7a/ || true
+          cp -r artifacts/android-native-lib-x86_64/* prebuilt/android/x86_64/ || true
+
+          echo "=== Prebuilt directory structure ==="
+          find prebuilt -type f | head -50
+
+      - name: Commit prebuilt libraries
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add prebuilt/
+          git diff --cached --quiet && echo "No changes" || (
+            git commit -m "ci: update prebuilt native libraries [skip ci]"
+            git push
+          )

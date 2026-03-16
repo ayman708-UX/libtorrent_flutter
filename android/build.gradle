@@ -1,0 +1,61 @@
+// The Android Gradle Plugin builds the native code with the Android NDK.
+
+group = "com.libtorrentflutter.libtorrent_flutter"
+version = "1.0"
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath("com.android.tools.build:gradle:8.11.1")
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: "com.android.library"
+
+android {
+    namespace = "com.libtorrentflutter.libtorrent_flutter"
+    compileSdk = 36
+
+    ndkVersion = android.ndkVersion
+
+    // Check if prebuilt JNI libs exist
+    def prebuiltDir = file("${projectDir}/../prebuilt/android")
+    def hasPrebuilt = prebuiltDir.exists() && prebuiltDir.listFiles()?.any { it.isDirectory() && it.listFiles()?.any { f -> f.name.endsWith('.so') } }
+
+    if (hasPrebuilt) {
+        // Use prebuilt .so files — no CMake compilation needed
+        sourceSets {
+            main {
+                jniLibs.srcDirs = ["${projectDir}/../prebuilt/android"]
+            }
+        }
+        println "libtorrent_flutter: Using PREBUILT native libraries"
+    } else {
+        // Build from source using CMake
+        externalNativeBuild {
+            cmake {
+                path = "../src/CMakeLists.txt"
+            }
+        }
+        println "libtorrent_flutter: Building native libraries from SOURCE"
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    defaultConfig {
+        minSdk = 24
+    }
+}
