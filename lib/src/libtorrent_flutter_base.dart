@@ -111,6 +111,7 @@ class LibtorrentFlutter {
 
   late final TorrentBridgeBindings _b;
   late final Pointer<LtSessionOpaque> _session;
+  late final String _defaultSavePath;
 
   // Torrent status
   final _torrentsCtrl = StreamController<Map<int, TorrentInfo>>.broadcast();
@@ -141,12 +142,14 @@ class LibtorrentFlutter {
   /// - [downloadLimit] / [uploadLimit] — speed limits in bytes/sec (0 = unlimited).
   /// - [pollInterval] — how often to poll for torrent/stream status updates.
   /// - [fetchTrackers] — automatically fetch best public trackers on startup.
+  /// - [defaultSavePath] — where to save torrent data. Defaults to system temp dir.
   static Future<void> init({
     String listenInterface = '',
     int downloadLimit = 0,
     int uploadLimit = 0,
     Duration pollInterval = const Duration(milliseconds: 600),
     bool fetchTrackers = true,
+    String? defaultSavePath,
   }) async {
     if (_instance != null) return;
     final engine = LibtorrentFlutter._();
@@ -172,6 +175,7 @@ class LibtorrentFlutter {
     }
 
     _instance = engine;
+    engine._defaultSavePath = defaultSavePath ?? Directory.systemTemp.path;
     engine._startPolling(pollInterval);
   }
 
@@ -196,11 +200,12 @@ class LibtorrentFlutter {
 
   /// Add a torrent from a magnet URI.
   ///
-  /// Returns the torrent ID. Set [streamOnly] to true to prevent background
-  /// downloading — only stream-requested pieces will be fetched.
-  int addMagnet(String magnetUri, String savePath, {bool streamOnly = false}) {
+  /// Returns the torrent ID. [savePath] defaults to the path set in init().
+  /// Set [streamOnly] to true to prevent background downloading.
+  int addMagnet(String magnetUri, [String? savePath, bool streamOnly = false]) {
     final enhanced = TrackerManager.injectTrackers(magnetUri);
-    final m = enhanced.toNativeUtf8(), s = savePath.toNativeUtf8();
+    final m = enhanced.toNativeUtf8();
+    final s = (savePath ?? _defaultSavePath).toNativeUtf8();
     try {
       final id = _b.addMagnet(_session, m, s, streamOnly ? 1 : 0);
       if (id < 0) throw Exception(_b.lastError().toDartString());
@@ -211,8 +216,9 @@ class LibtorrentFlutter {
   }
 
   /// Add a torrent from a .torrent file path.
-  int addTorrentFile(String filePath, String savePath, {bool streamOnly = false}) {
-    final f = filePath.toNativeUtf8(), s = savePath.toNativeUtf8();
+  int addTorrentFile(String filePath, [String? savePath, bool streamOnly = false]) {
+    final f = filePath.toNativeUtf8();
+    final s = (savePath ?? _defaultSavePath).toNativeUtf8();
     try {
       final id = _b.addTorrentFile(_session, f, s, streamOnly ? 1 : 0);
       if (id < 0) throw Exception(_b.lastError().toDartString());
@@ -273,10 +279,11 @@ class LibtorrentFlutter {
   ///
   /// Returns [StreamInfo] with an HTTP URL that can be passed to any video player.
   /// [fileIndex] = -1 auto-selects the largest streamable file.
-  StreamInfo startStream(int torrentId, {int fileIndex = -1}) {
+  /// [maxCacheBytes] = 0 means unlimited. Set to e.g. 500*1024*1024 for 500MB limit.
+  StreamInfo startStream(int torrentId, {int fileIndex = -1, int maxCacheBytes = 0}) {
     final portBuf = calloc<Int32>();
     try {
-      final streamId = _b.startStream(_session, torrentId, fileIndex, portBuf);
+      final streamId = _b.startStream(_session, torrentId, fileIndex, portBuf, maxCacheBytes);
       if (streamId < 0) {
         throw Exception('startStream failed: ${_b.lastError().toDartString()}');
       }
@@ -419,10 +426,42 @@ class LibtorrentFlutter {
       a.hasMetadata != b.hasMetadata ||
       a.name        != b.name;
 
-  // ─── Dispose ──────────────────────────────────────────────────────────────
+  // ─── Cleanup ───────────────────────────────────────────────────────────────
 
-  /// Shut down the engine. Stop all streams and destroy the session.
+  /// Clean up a single torrent: stops its streams, removes it, deletes files.
+  ///
+  /// Returns true if the torrent existed and was removed, false if it was
+  /// already gone.
+  bool disposeTorrent(int torrentId) {
+    if (!_torrents.containsKey(torrentId)) return false;
+
+    // Stop any active streams for this torrent
+    stopAllStreamsForTorrent(torrentId);
+
+    // Remove the torrent and delete its files
+    removeTorrent(torrentId, deleteFiles: true);
+    return true;
+  }
+
+  /// Clean up ALL torrents: stops every stream, removes every torrent,
+  /// deletes all downloaded files. Call this on your exit button.
+  void disposeAll() {
+    // Stop all streams first
+    for (final sid in _streams.keys.toList()) {
+      try { stopStream(sid); } catch (_) {}
+    }
+
+    // Remove all torrents and delete their files
+    for (final tid in _torrents.keys.toList()) {
+      try { removeTorrent(tid, deleteFiles: true); } catch (_) {}
+    }
+  }
+
+  /// Shut down the engine entirely. Calls [disposeAll] first, then
+  /// destroys the native session. After this, you'd need to call
+  /// [init] again to use the engine.
   Future<void> dispose() async {
+    disposeAll();
     _pollTimer?.cancel();
     _b.destroySession(_session);
     await _torrentsCtrl.close();

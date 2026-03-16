@@ -378,3 +378,58 @@ jobs:
             git commit -m "ci: update prebuilt native libraries [skip ci]"
             git push
           )
+
+  # ═══════════════════════════════════════════════════════════════════════════════
+  # RELEASE — create a GitHub Release with native libs
+  # ═══════════════════════════════════════════════════════════════════════════════
+  create-release:
+    needs: [bundle-prebuilt]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts/
+
+      - name: Package release assets
+        run: |
+          mkdir -p release-assets
+          cd release-artifacts
+
+          # Zip each platform
+          for dir in linux-native-lib macos-native-lib windows-native-lib; do
+            if [ -d "$dir" ]; then
+              cd "$dir" && zip -r "../../release-assets/${dir}.zip" . && cd ..
+            fi
+          done
+          for dir in android-native-lib-arm64-v8a android-native-lib-armeabi-v7a android-native-lib-x86_64; do
+            if [ -d "$dir" ]; then
+              cd "$dir" && zip -r "../../release-assets/${dir}.zip" . && cd ..
+            fi
+          done
+
+          ls -la ../release-assets/
+
+      - name: Get version from pubspec
+        id: version
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          body: |
+            Prebuilt native libraries for libtorrent_flutter v${{ steps.version.outputs.version }}
+
+            All binaries are self-contained — no system dependencies needed.
+          files: release-assets/*
+          make_latest: true

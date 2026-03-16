@@ -132,9 +132,9 @@ typedef LtSetFilePriorities = void Function(
 
 // ─── Stream management ──────────────────────────────────────────────────────
 typedef _StartStreamN = Int64 Function(
-    Pointer<LtSessionOpaque>, Int64, Int32, Pointer<Int32>);
+    Pointer<LtSessionOpaque>, Int64, Int32, Pointer<Int32>, Int64);
 typedef LtStartStream = int Function(
-    Pointer<LtSessionOpaque>, int, int, Pointer<Int32>);
+    Pointer<LtSessionOpaque>, int, int, Pointer<Int32>, int);
 
 typedef _StopStreamN = Void Function(Pointer<LtSessionOpaque>, Int64);
 typedef LtStopStream = void Function(Pointer<LtSessionOpaque>, int);

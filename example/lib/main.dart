@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:libtorrent_flutter/libtorrent_flutter.dart';
 
@@ -77,11 +76,8 @@ class _HomePageState extends State<HomePage> {
     final magnet = _magnetCtrl.text.trim();
     if (magnet.isEmpty) return;
 
-    final savePath = Platform.isAndroid
-        ? '/data/data/com.example.example/cache/torrents'
-        : '${Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'] ?? '/tmp'}/torrents';
-
-    _engine.addMagnet(magnet, savePath, streamOnly: true);
+    // No save path needed — defaults to system temp
+    _engine.addMagnet(magnet, null, true);
     _magnetCtrl.clear();
   }
 

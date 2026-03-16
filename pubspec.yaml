@@ -5,6 +5,13 @@ description: >
   and Android.
 version: 1.0.0
 homepage: https://github.com/ayman708-UX/libtorrent_flutter
+repository: https://github.com/ayman708-UX/libtorrent_flutter
+issue_tracker: https://github.com/ayman708-UX/libtorrent_flutter/issues
+topics:
+  - torrent
+  - streaming
+  - libtorrent
+  - ffi
 
 environment:
   sdk: ^3.5.0

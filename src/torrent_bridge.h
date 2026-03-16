@@ -109,7 +109,8 @@ TORRENT_API int lt_get_files(lt_session_handle session, lt_torrent_id id,
 
 TORRENT_API lt_stream_id lt_start_stream(lt_session_handle session,
                                           lt_torrent_id torrent_id,
-                                          int file_index, int* out_port);
+                                          int file_index, int* out_port,
+                                          int64_t max_cache_bytes);
 TORRENT_API void lt_stop_stream(lt_session_handle session, lt_stream_id stream_id);
 TORRENT_API int lt_get_stream_status(lt_session_handle session,
                                       lt_stream_id stream_id,
