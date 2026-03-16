@@ -35,22 +35,36 @@ void main() {
     final torrentId = LibtorrentFlutter.instance.addMagnet(magnetUri, savePath);
     expect(torrentId, greaterThanOrEqualTo(0));
 
-    // Wait for the engine to acknowledge and process the torrent addition
-    // By checking the first broadcast update, we verify that:
-    // 1. The FFI bindings and C++ singleton successfully added the magnet payload
-    // 2. The engine correctly parsed the 'dn' (display name) parameter
-    // 3. The background polling C++ -> Dart isolate callback stream is alive
-    final updates = await LibtorrentFlutter.instance.torrentUpdates.firstWhere(
-      (m) => m.containsKey(torrentId),
-    );
+    int totalSize = 0;
+    String lastState = '';
 
-    final info = updates[torrentId]!;
-    expect(info.state, isNotNull, reason: 'The engine should broadcast the torrent state.');
+    final sub = LibtorrentFlutter.instance.torrentUpdates.listen((updates) {
+      final info = updates[torrentId];
+      if (info != null) {
+        if (info.totalWanted > 0) totalSize = info.totalWanted;
+        if (info.state.name != lastState) {
+          lastState = info.state.name;
+          print('==> Torrent State: $lastState | Size: $totalSize bytes');
+        }
+      }
+    });
+
+    // Wait up to 30 seconds for Size to populate (metadata arrived)
+    for (int i = 0; i < 60; i++) {
+        if (totalSize > 0) {
+            print('✅ Torrent metadata downloaded! Total Size: $totalSize bytes');
+            break;
+        }
+        await Future.delayed(const Duration(milliseconds: 500));
+    }
+    
+    expect(totalSize, greaterThan(0), reason: 'Engine should have fetched metadata and calculated torrent size');
 
     // Verify torrents map reflects the update
     expect(LibtorrentFlutter.instance.torrents.containsKey(torrentId), isTrue);
 
     // Clean up
+    await sub.cancel();
     LibtorrentFlutter.instance.removeTorrent(torrentId, deleteFiles: true);
 
     // Verify we can access the torrent/stream maps (empty)
