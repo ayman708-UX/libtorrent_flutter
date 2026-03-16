@@ -23,13 +23,11 @@ void main() {
     expect(version, isNotEmpty);
     expect(version, contains('2.'));
 
-    // Test a real magnet link (Ubuntu Server 23.10 as an example or Big Buck Bunny)
-    // We'll use Big Buck Bunny since it's universally highly seeded and small/legal.
-    const magnetUri = 'magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny'
-        '&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce'
-        '&tr=udp%3A%2F%2F9.rarbg.com%3A2810%2Fannounce'
-        '&tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A80%2Fannounce'
-        '&tr=http%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce';
+    // Test a real magnet link: Ubuntu 24.04 Desktop
+    // Very highly seeded official TCP/HTTPS trackers with tiny metadata requirements
+    const magnetUri = 'magnet:?xt=urn:btih:eeca4d7a8ce29edfed4b41de452b489d8db1af00&dn=ubuntu-24.04.1-desktop-amd64.iso'
+        '&tr=https%3A%2F%2Ftorrent.ubuntu.com%2Fannounce'
+        '&tr=https%3A%2F%2Fipv6.torrent.ubuntu.com%2Fannounce';
     final savePath = Directory.systemTemp.createTempSync('lt_test_').path;
 
     final torrentId = LibtorrentFlutter.instance.addMagnet(magnetUri, savePath);
