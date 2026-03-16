@@ -27,7 +27,7 @@ jobs:
             libboost-all-dev \
             libssl-dev \
             cmake g++ pkg-config \
-            libgtk-3-dev
+            libgtk-3-dev xvfb
 
       - name: Build native library
         run: |
@@ -50,7 +50,7 @@ jobs:
         run: |
           cd example
           flutter pub get
-          flutter test integration_test/ -d linux --timeout 60s || echo "Test skipped (may need display)"
+          xvfb-run flutter test integration_test/ -d linux --timeout 60s || echo "Test skipped (may need display)"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -93,18 +93,18 @@ jobs:
             $(pkg-config --cflags libtorrent-rasterbar) \
             -I${BOOST_INC} \
             -I${OPENSSL_INC} \
-            -o build-macos/libtorrent_flutter.dylib \
+            -o build-macos/liblibtorrent_flutter.dylib \
             src/torrent_bridge.cpp \
             $(pkg-config --libs libtorrent-rasterbar) \
-            -install_name @rpath/libtorrent_flutter.dylib
+            -install_name @rpath/liblibtorrent_flutter.dylib
 
-          ls -la build-macos/libtorrent_flutter.dylib
+          ls -la build-macos/liblibtorrent_flutter.dylib
           echo "✅ macOS build succeeded"
 
       - name: Copy to prebuilt
         run: |
           mkdir -p prebuilt/macos/universal
-          cp build-macos/libtorrent_flutter.dylib prebuilt/macos/universal/
+          cp build-macos/liblibtorrent_flutter.dylib prebuilt/macos/universal/
           ls -la prebuilt/macos/universal/
 
       - name: Setup Flutter
