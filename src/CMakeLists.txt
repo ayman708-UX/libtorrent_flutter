@@ -54,12 +54,42 @@ elseif(ANDROID)
     endif()
 
 elseif(APPLE)
-    # macOS: Use pkg-config IMPORTED_TARGET for proper link resolution
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(LIBTORRENT REQUIRED IMPORTED_TARGET libtorrent-rasterbar)
-    target_link_libraries(libtorrent_flutter PRIVATE PkgConfig::LIBTORRENT)
+    # macOS: Prefer CMake config files (Homebrew ships LibtorrentRasterbarConfig.cmake)
+    # Try Homebrew paths both ARM and Intel
+    list(APPEND CMAKE_PREFIX_PATH
+        "/opt/homebrew/opt/libtorrent-rasterbar"
+        "/opt/homebrew"
+        "/usr/local/opt/libtorrent-rasterbar"
+        "/usr/local"
+    )
 
-    # Boost headers needed by libtorrent
+    find_package(LibtorrentRasterbar QUIET)
+    if(LibtorrentRasterbar_FOUND)
+        message(STATUS "Found LibtorrentRasterbar via cmake config")
+        target_link_libraries(libtorrent_flutter PRIVATE LibtorrentRasterbar::torrent-rasterbar)
+    else()
+        # Fallback: find the library manually
+        message(STATUS "LibtorrentRasterbar cmake config not found, searching manually")
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(LIBTORRENT REQUIRED libtorrent-rasterbar)
+
+        target_include_directories(libtorrent_flutter PRIVATE ${LIBTORRENT_INCLUDE_DIRS})
+
+        # Use full library paths from pkg-config
+        find_library(LT_FULL_LIB
+            NAMES torrent-rasterbar
+            PATHS ${LIBTORRENT_LIBRARY_DIRS}
+            NO_DEFAULT_PATH
+        )
+        if(LT_FULL_LIB)
+            target_link_libraries(libtorrent_flutter PRIVATE ${LT_FULL_LIB})
+        else()
+            target_link_directories(libtorrent_flutter PRIVATE ${LIBTORRENT_LIBRARY_DIRS})
+            target_link_libraries(libtorrent_flutter PRIVATE ${LIBTORRENT_LIBRARIES})
+        endif()
+    endif()
+
+    # Boost headers
     find_package(Boost QUIET)
     if(Boost_FOUND)
         target_include_directories(libtorrent_flutter PRIVATE ${Boost_INCLUDE_DIRS})
@@ -72,7 +102,7 @@ elseif(APPLE)
         endforeach()
     endif()
 
-    # OpenSSL headers — Homebrew OpenSSL is keg-only (not in default path)
+    # OpenSSL headers (keg-only on Homebrew)
     find_package(OpenSSL QUIET)
     if(OpenSSL_FOUND)
         target_include_directories(libtorrent_flutter PRIVATE ${OPENSSL_INCLUDE_DIR})
@@ -80,7 +110,6 @@ elseif(APPLE)
         foreach(_dir "/opt/homebrew/opt/openssl/include" "/usr/local/opt/openssl/include")
             if(EXISTS "${_dir}/openssl/opensslv.h")
                 target_include_directories(libtorrent_flutter PRIVATE "${_dir}")
-                message(STATUS "Found OpenSSL headers at ${_dir}")
                 break()
             endif()
         endforeach()

@@ -71,6 +71,7 @@ jobs:
 
       - name: Build native library
         run: |
+          LT_PREFIX=$(brew --prefix libtorrent-rasterbar)
           BOOST_PREFIX=$(brew --prefix boost)
           OPENSSL_PREFIX=$(brew --prefix openssl)
 
@@ -78,6 +79,7 @@ jobs:
           cmake ../src \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DCMAKE_PREFIX_PATH="${LT_PREFIX};${BOOST_PREFIX};${OPENSSL_PREFIX}" \
             -DBOOST_ROOT="${BOOST_PREFIX}" \
             -DBoost_INCLUDE_DIR="${BOOST_PREFIX}/include" \
             -DOPENSSL_ROOT_DIR="${OPENSSL_PREFIX}" \
