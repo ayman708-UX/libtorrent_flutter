@@ -1,5 +1,4 @@
 # src/CMakeLists.txt — Shared build for torrent_bridge native library
-# Called from windows/, linux/, android/, and macos/ platform dirs.
 
 cmake_minimum_required(VERSION 3.14)
 project(libtorrent_flutter_native LANGUAGES CXX)
@@ -25,7 +24,6 @@ if(WIN32)
         NOMINMAX
         _WIN32_WINNT=0x0601
     )
-
     if(DEFINED ENV{VCPKG_ROOT} AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
         set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
             CACHE STRING "vcpkg toolchain")
@@ -56,40 +54,29 @@ elseif(ANDROID)
     endif()
 
 elseif(APPLE)
-    # macOS: Use pkg-config (Homebrew) with explicit Boost include
-    find_package(PkgConfig)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(LIBTORRENT REQUIRED libtorrent-rasterbar)
-        target_include_directories(libtorrent_flutter PRIVATE ${LIBTORRENT_INCLUDE_DIRS})
-        target_link_directories(libtorrent_flutter PRIVATE ${LIBTORRENT_LIBRARY_DIRS})
-        target_link_libraries(libtorrent_flutter PRIVATE ${LIBTORRENT_LIBRARIES})
+    # macOS: Use pkg-config IMPORTED_TARGET for proper link resolution
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(LIBTORRENT REQUIRED IMPORTED_TARGET libtorrent-rasterbar)
+    target_link_libraries(libtorrent_flutter PRIVATE PkgConfig::LIBTORRENT)
 
-        # Boost headers are needed but pkg-config for libtorrent may not include them
-        find_package(Boost QUIET)
-        if(Boost_FOUND)
-            target_include_directories(libtorrent_flutter PRIVATE ${Boost_INCLUDE_DIRS})
-        else()
-            # Homebrew fallback: Apple Silicon + Intel
-            foreach(_dir "/opt/homebrew/include" "/usr/local/include")
-                if(EXISTS "${_dir}/boost/config.hpp")
-                    target_include_directories(libtorrent_flutter PRIVATE "${_dir}")
-                    message(STATUS "Found Boost headers at ${_dir}")
-                    break()
-                endif()
-            endforeach()
-        endif()
+    # Boost headers needed by libtorrent
+    find_package(Boost QUIET)
+    if(Boost_FOUND)
+        target_include_directories(libtorrent_flutter PRIVATE ${Boost_INCLUDE_DIRS})
     else()
-        find_package(LibtorrentRasterbar REQUIRED)
-        target_link_libraries(libtorrent_flutter PRIVATE LibtorrentRasterbar::torrent-rasterbar)
+        foreach(_dir "/opt/homebrew/include" "/usr/local/include")
+            if(EXISTS "${_dir}/boost/config.hpp")
+                target_include_directories(libtorrent_flutter PRIVATE "${_dir}")
+                break()
+            endif()
+        endforeach()
     endif()
 
 else()
-    # Linux: Use pkg-config
+    # Linux: Use pkg-config IMPORTED_TARGET
     find_package(PkgConfig REQUIRED)
-    pkg_check_modules(LIBTORRENT REQUIRED libtorrent-rasterbar)
-    target_include_directories(libtorrent_flutter PRIVATE ${LIBTORRENT_INCLUDE_DIRS})
-    target_link_directories(libtorrent_flutter PRIVATE ${LIBTORRENT_LIBRARY_DIRS})
-    target_link_libraries(libtorrent_flutter PRIVATE ${LIBTORRENT_LIBRARIES})
+    pkg_check_modules(LIBTORRENT REQUIRED IMPORTED_TARGET libtorrent-rasterbar)
+    target_link_libraries(libtorrent_flutter PRIVATE PkgConfig::LIBTORRENT)
 endif()
 
 # ── Visibility ─────────────────────────────────────────────────────────────────

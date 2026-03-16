@@ -26,16 +26,12 @@ jobs:
             libtorrent-rasterbar-dev \
             libboost-all-dev \
             libssl-dev \
-            cmake \
-            g++ \
-            pkg-config
+            cmake g++ pkg-config
 
       - name: Build native library
         run: |
           mkdir -p build-linux && cd build-linux
-          cmake ../src \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+          cmake ../src -DCMAKE_BUILD_TYPE=Release -DCMAKE_POSITION_INDEPENDENT_CODE=ON -Wno-dev
           cmake --build . --config Release -j$(nproc)
 
       - name: Copy to prebuilt
@@ -53,7 +49,7 @@ jobs:
         run: |
           cd example
           flutter pub get
-          flutter test integration_test/ -d linux --timeout 60s || echo "Integration test skipped (may need display)"
+          flutter test integration_test/ -d linux --timeout 60s || echo "Test skipped (may need display)"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -76,19 +72,16 @@ jobs:
 
       - name: Build native library
         run: |
-          # Get boost include path from homebrew
           BOOST_PREFIX=$(brew --prefix boost)
           OPENSSL_PREFIX=$(brew --prefix openssl)
-          LT_PREFIX=$(brew --prefix libtorrent-rasterbar)
 
           mkdir -p build-macos && cd build-macos
           cmake ../src \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
-            -DCMAKE_PREFIX_PATH="${LT_PREFIX};${BOOST_PREFIX};${OPENSSL_PREFIX}" \
             -DBOOST_ROOT="${BOOST_PREFIX}" \
-            -DBoost_INCLUDE_DIR="${BOOST_PREFIX}/include"
+            -DBoost_INCLUDE_DIR="${BOOST_PREFIX}/include" \
+            -Wno-dev
           cmake --build . --config Release -j$(sysctl -n hw.ncpu)
 
       - name: Copy to prebuilt
@@ -106,7 +99,7 @@ jobs:
         run: |
           cd example
           flutter pub get
-          flutter test integration_test/ -d macos --timeout 60s || echo "Integration test completed or skipped"
+          flutter test integration_test/ -d macos --timeout 60s || echo "Test completed or skipped"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -130,8 +123,7 @@ jobs:
           echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
       - name: Install libtorrent via vcpkg
-        run: |
-          C:\vcpkg\vcpkg.exe install libtorrent:x64-windows
+        run: C:\vcpkg\vcpkg.exe install libtorrent:x64-windows
         timeout-minutes: 60
 
       - name: Build native library
@@ -148,7 +140,6 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force "prebuilt\windows\x64"
           Get-ChildItem -Path build-win -Recurse -Filter "*.dll" | Copy-Item -Destination "prebuilt\windows\x64\"
-          # Also copy libtorrent + dependency runtime DLLs from vcpkg
           $vcpkgBin = "C:\vcpkg\installed\x64-windows\bin"
           if (Test-Path $vcpkgBin) {
             Get-ChildItem $vcpkgBin -Filter "*.dll" | Copy-Item -Destination "prebuilt\windows\x64\"
@@ -180,6 +171,7 @@ jobs:
   build-android:
     runs-on: ubuntu-22.04
     strategy:
+      fail-fast: false
       matrix:
         abi: [arm64-v8a, armeabi-v7a, x86_64]
     steps:
@@ -194,7 +186,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build python3 libssl-dev
+          sudo apt-get install -y cmake ninja-build python3
 
       - name: Download Boost headers
         run: |
@@ -206,16 +198,8 @@ jobs:
         env:
           NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          # Clone WITH submodules (try_signal etc.)
           git clone --depth 1 --recurse-submodules --branch v2.0.11 https://github.com/arvidn/libtorrent.git libtorrent-src
           cd libtorrent-src
-
-          # Map ABI to API level
-          case "${{ matrix.abi }}" in
-            arm64-v8a)   API=24 ;;
-            armeabi-v7a) API=24 ;;
-            x86_64)      API=24 ;;
-          esac
 
           mkdir build && cd build
           cmake .. \
@@ -223,7 +207,7 @@ jobs:
             -DCMAKE_ANDROID_NDK=$NDK \
             -DCMAKE_ANDROID_ARCH_ABI=${{ matrix.abi }} \
             -DCMAKE_ANDROID_STL_TYPE=c++_shared \
-            -DCMAKE_SYSTEM_VERSION=$API \
+            -DCMAKE_SYSTEM_VERSION=24 \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DBUILD_SHARED_LIBS=OFF \
@@ -232,50 +216,51 @@ jobs:
             -Dencryption=OFF \
             -DBOOST_ROOT=$BOOST_ROOT \
             -DBoost_INCLUDE_DIR=$BOOST_ROOT \
-            -DCMAKE_CXX_FLAGS="-DBOOST_NO_IOSTREAM" \
             -G Ninja \
             -Wno-dev
           ninja -j$(nproc)
-          echo "=== libtorrent build artifacts ==="
-          find . -name "*.a" -o -name "*.so" | head -20
+          echo "=== Built ==="
+          find . -name "*.a" | head -5
         timeout-minutes: 30
 
       - name: Build torrent_bridge for Android
         env:
           NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          case "${{ matrix.abi }}" in
-            arm64-v8a)   API=24 ;;
-            armeabi-v7a) API=24 ;;
-            x86_64)      API=24 ;;
-          esac
-
           LT_BUILD_DIR=$PWD/libtorrent-src/build
           LT_SRC_DIR=$PWD/libtorrent-src
+          LT_LIB=$(find $LT_BUILD_DIR -name "libtorrent-rasterbar.a" | head -1)
+          echo "libtorrent lib: $LT_LIB"
+
+          # Determine target triple
+          case "${{ matrix.abi }}" in
+            arm64-v8a)   TARGET="aarch64-linux-android24" ;;
+            armeabi-v7a) TARGET="armv7a-linux-androideabi24" ;;
+            x86_64)      TARGET="x86_64-linux-android24" ;;
+          esac
 
           mkdir -p build-bridge && cd build-bridge
 
-          # Find the built libtorrent static lib
-          LT_LIB=$(find $LT_BUILD_DIR -name "libtorrent-rasterbar.a" | head -1)
-          echo "Found libtorrent at: $LT_LIB"
-
-          # Build our bridge as a shared library, statically linking libtorrent
+          # Build with OpenSSL DISABLED — critical to avoid missing header errors
           $NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++ \
-            --target=$(case "${{ matrix.abi }}" in arm64-v8a) echo "aarch64-linux-android$API";; armeabi-v7a) echo "armv7a-linux-androideabi$API";; x86_64) echo "x86_64-linux-android$API";; esac) \
+            --target=$TARGET \
             -shared -fPIC -O2 -std=c++17 \
             -DTORRENT_BRIDGE_EXPORTS \
             -DTORRENT_NO_DEPRECATE \
             -DTORRENT_USE_OPENSSL=0 \
+            -DTORRENT_USE_LIBCRYPTO=0 \
+            -DTORRENT_SSL_PEERS=0 \
             -DBOOST_NO_IOSTREAM \
             -I$LT_SRC_DIR/include \
             -I$BOOST_ROOT \
             -o liblibtorrent_flutter.so \
             ../src/torrent_bridge.cpp \
             -Wl,--whole-archive $LT_LIB -Wl,--no-whole-archive \
-            -llog -landroid \
+            -llog \
             -static-libstdc++
 
           ls -la liblibtorrent_flutter.so
+          echo "✅ Built for ${{ matrix.abi }}"
 
       - name: Copy to prebuilt
         run: |
@@ -317,7 +302,6 @@ jobs:
           mkdir -p prebuilt/android/armeabi-v7a
           mkdir -p prebuilt/android/x86_64
 
-          # Copy from flat artifact structure
           cp artifacts/linux-native-lib/x64/* prebuilt/linux/x64/ 2>/dev/null || true
           cp artifacts/macos-native-lib/universal/* prebuilt/macos/universal/ 2>/dev/null || true
           cp artifacts/windows-native-lib/x64/* prebuilt/windows/x64/ 2>/dev/null || true
@@ -325,7 +309,7 @@ jobs:
           cp artifacts/android-native-lib-armeabi-v7a/* prebuilt/android/armeabi-v7a/ 2>/dev/null || true
           cp artifacts/android-native-lib-x86_64/* prebuilt/android/x86_64/ 2>/dev/null || true
 
-          echo "=== Prebuilt directory structure ==="
+          echo "=== Prebuilt libs ==="
           find prebuilt -type f
 
       - name: Commit prebuilt libraries
@@ -333,7 +317,7 @@ jobs:
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
           git add prebuilt/
-          git diff --cached --quiet && echo "No changes to commit" || (
+          git diff --cached --quiet && echo "No changes" || (
             git commit -m "ci: update prebuilt native libraries [skip ci]"
             git push
           )
