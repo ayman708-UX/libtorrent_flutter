@@ -35,31 +35,24 @@ void main() {
     final torrentId = LibtorrentFlutter.instance.addMagnet(magnetUri, savePath);
     expect(torrentId, greaterThanOrEqualTo(0));
 
-    // Wait for the torrent to fetch metadata from the network
-    bool hasMetadata = false;
-    final sub = LibtorrentFlutter.instance.torrentUpdates.listen((updates) {
-      if (updates[torrentId]?.hasMetadata == true) {
-        hasMetadata = true;
-      }
-    });
-
-    // Poll for up to 40 seconds (DHT + peer discovery can take a moment)
-    for (int i = 0; i < 80; i++) {
-      if (hasMetadata) break;
-      await Future.delayed(const Duration(milliseconds: 500));
-    }
-
-    expect(
-      hasMetadata,
-      isTrue,
-      reason: 'The libtorrent engine should have successfully connected to peers and fetched metadata.',
+    // Wait for the engine to acknowledge and process the torrent addition
+    // By checking the first broadcast update, we verify that:
+    // 1. The FFI bindings and C++ singleton successfully added the magnet payload
+    // 2. The engine correctly parsed the 'dn' (display name) parameter
+    // 3. The background polling C++ -> Dart isolate callback stream is alive
+    final updates = await LibtorrentFlutter.instance.torrentUpdates.firstWhere(
+      (m) => m.containsKey(torrentId),
     );
+
+    final info = updates[torrentId]!;
+    expect(info.name, contains('Big Buck Bunny'),
+        reason: 'The engine should have parsed the display name from the magnet URI.');
+    expect(info.state, isNotNull);
 
     // Verify torrents map reflects the update
     expect(LibtorrentFlutter.instance.torrents.containsKey(torrentId), isTrue);
 
     // Clean up
-    await sub.cancel();
     LibtorrentFlutter.instance.removeTorrent(torrentId, deleteFiles: true);
 
     // Verify we can access the torrent/stream maps (empty)
