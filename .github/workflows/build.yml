@@ -131,6 +131,7 @@ jobs:
             src/torrent_bridge.cpp \
             -Wl,-force_load,"$LT_LIB" \
             -L${OPENSSL_LIB} -lssl -lcrypto \
+            -framework CoreFoundation -framework SystemConfiguration \
             -install_name @rpath/liblibtorrent_flutter.dylib
 
           ls -la build-macos/liblibtorrent_flutter.dylib
