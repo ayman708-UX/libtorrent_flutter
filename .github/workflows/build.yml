@@ -26,7 +26,8 @@ jobs:
             libtorrent-rasterbar-dev \
             libboost-all-dev \
             libssl-dev \
-            cmake g++ pkg-config
+            cmake g++ pkg-config \
+            libgtk-3-dev
 
       - name: Build native library
         run: |

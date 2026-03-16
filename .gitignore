@@ -17,9 +17,9 @@ pubspec.lock
 
 # macOS
 .DS_Store
-macos/Pods/
-*.xcworkspace/
-*.xcodeproj/
+/macos/Pods/
+/macos/*.xcworkspace/
+/macos/*.xcodeproj/
 
 # Android
 android/.gradle/
