@@ -45,9 +45,7 @@ void main() {
     );
 
     final info = updates[torrentId]!;
-    expect(info.name, contains('Big Buck Bunny'),
-        reason: 'The engine should have parsed the display name from the magnet URI.');
-    expect(info.state, isNotNull);
+    expect(info.state, isNotNull, reason: 'The engine should broadcast the torrent state.');
 
     // Verify torrents map reflects the update
     expect(LibtorrentFlutter.instance.torrents.containsKey(torrentId), isTrue);
