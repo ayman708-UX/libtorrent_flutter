@@ -1306,17 +1306,32 @@ TORRENT_API lt_stream_id lt_start_stream(lt_session_handle session,
         handle.unset_flags(lt::torrent_flags::stop_when_ready);
         handle.resume();
 
-        // STARTUP BURST: Immediately set 0ms deadlines on first 10 pieces
-        // so the player can start within ~1-2 seconds instead of waiting
-        int burst_end = std::min(ss->first_piece + 10, ss->last_piece);
-        for (int i = ss->first_piece; i <= burst_end; ++i) {
-            int deadline_ms = (i - ss->first_piece) * 45; // staggered: 0, 45, 90... 450ms
-            handle.set_piece_deadline(lt::piece_index_t(i), deadline_ms,
+        // DUAL-END PRELOAD: grab start AND end of file simultaneously.
+        // MP4/MKV store their seek table (moov atom) at the END of the file.
+        // Without the tail pieces, players refuse to seek and buffer the whole file.
+        const int64_t PRELOAD_BYTES = 4 * 1024 * 1024; // 4 MB each end
+        int preload_pieces = std::max(4,
+            (int)(PRELOAD_BYTES / std::max((int64_t)1, (int64_t)ss->piece_length)));
+
+        // HEAD: first ~4 MB — staggered so libtorrent fetches in order
+        int head_end = std::min(ss->first_piece + preload_pieces, ss->last_piece);
+        for (int i = ss->first_piece; i <= head_end; ++i) {
+            int ms = (i - ss->first_piece) * 30; // 0, 30, 60 ... ms
+            handle.set_piece_deadline(lt::piece_index_t(i), ms,
                                       lt::torrent_handle::alert_when_available);
             handle.piece_priority(lt::piece_index_t(i), lt::download_priority_t{7});
         }
 
-        // Mark ready immediately — HTTP thread will block until pieces arrive
+        // TAIL: last ~4 MB — fetch in parallel at 0ms deadline
+        // These contain the moov atom / index needed for instant seeking
+        int tail_start = std::max(ss->last_piece - preload_pieces, head_end + 1);
+        for (int i = tail_start; i <= ss->last_piece; ++i) {
+            handle.set_piece_deadline(lt::piece_index_t(i), 0,
+                                      lt::torrent_handle::alert_when_available);
+            handle.piece_priority(lt::piece_index_t(i), lt::download_priority_t{7});
+        }
+
+        // Mark ready — HTTP thread will block until each requested piece arrives
         ss->is_ready.store(true);
     } catch (...) {}
 

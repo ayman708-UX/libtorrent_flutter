@@ -1,113 +1,211 @@
 # libtorrent_flutter
 
-Native libtorrent 2.0 bindings for Flutter. Add a magnet link, pick a file, get a stream URL — that's it.
+The only Flutter package wrapping **libtorrent 2.0** — the same C++ engine powering qBittorrent, Deluge, and Transmission. Add a magnet link, pick a file, get a stream URL. Works on Windows, Linux, macOS, and Android with zero setup — all native binaries are bundled.
 
-Works on Windows, Linux, macOS, and Android. All native libraries are bundled, no system dependencies needed.
+```yaml
+dependencies:
+  libtorrent_flutter: ^1.0.0
+```
 
-## What it does
+---
 
-- Adds torrents from magnet links or .torrent files
-- Lists files, lets you pick which ones to download
-- Spins up a local HTTP server that streams any file from the torrent
-- Hands you a URL like `http://127.0.0.1:PORT/stream/...` — pass it to any video player
-- Auto-fetches best public trackers for faster peer discovery
-- Optimized piece prioritization for low-latency seeking
+## Why libtorrent?
+
+Every other Flutter torrent package uses either a Java wrapper (Android-only) or a pure-Dart implementation that can't compete on speed. libtorrent 2.0 gives you:
+
+- **`set_piece_deadline`** — tells the engine "I need this piece in 150ms", and it picks the fastest peer automatically. Far smarter than simple sequential download.
+- **uTP support** — connects to peers behind NAT that other clients can't reach.
+- **Dual-end preloading** — fetches the start AND end of every file immediately. MP4/MKV store their seek table at the end; without it, players buffer the whole file before seeking works.
+- **DHT + PEX + LSD** — finds peers without trackers.
 
 ## Usage
 
-### Basic streaming
+### Initialize
 
 ```dart
 import 'package:libtorrent_flutter/libtorrent_flutter.dart';
 
-void main() async {
-  // Start the engine (saves to system temp by default)
-  await LibtorrentFlutter.init();
+// Call once, before anything else. 
+// Saves to system temp dir by default — no permission setup needed on any platform.
+await LibtorrentFlutter.init();
 
-  // Add a magnet link — no save path needed
-  final id = LibtorrentFlutter.instance.addMagnet(
-    'magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c',
-  );
-
-  // Listen for status updates — wait for metadata
-  LibtorrentFlutter.instance.torrentUpdates.listen((torrents) {
-    final t = torrents[id];
-    if (t == null) return;
-
-    print('${t.name} — ${t.state.name} — '
-        '${(t.progress * 100).toStringAsFixed(1)}% — '
-        '${(t.downloadRate / 1024).toStringAsFixed(0)} KB/s');
-
-    if (t.hasMetadata) {
-      // Start streaming — pass maxCacheBytes to limit disk/memory usage
-      final stream = LibtorrentFlutter.instance.startStream(
-        id,
-        maxCacheBytes: 500 * 1024 * 1024,  // 500MB sliding window
-      );
-      print('Stream URL: ${stream.url}');
-      // Pass stream.url to media_kit, VLC, mpv, or whatever you use
-    }
-  });
-}
+// Advanced options:
+await LibtorrentFlutter.init(
+  downloadLimit: 5 * 1024 * 1024,  // 5 MB/s cap
+  uploadLimit:   1 * 1024 * 1024,  // 1 MB/s cap
+  defaultSavePath: '/my/custom/path',
+  fetchTrackers: true,  // auto-inject best public trackers (default: true)
+  pollInterval: Duration(milliseconds: 500),
+);
 ```
 
-### Picking a specific file
+### Add a torrent
 
 ```dart
-// After metadata is available, list all files
-final files = LibtorrentFlutter.instance.getFiles(torrentId);
+final engine = LibtorrentFlutter.instance;
+
+// From a magnet link — save path defaults to system temp
+final id = engine.addMagnet('magnet:?xt=urn:btih:...');
+
+// From a magnet link with a custom save path
+final id = engine.addMagnet('magnet:?xt=urn:btih:...', '/downloads');
+
+// From a .torrent file
+final id = engine.addTorrentFile('/path/to/file.torrent');
+
+// Remove a torrent
+engine.removeTorrent(id, deleteFiles: true);
+
+// Pause / resume
+engine.pauseTorrent(id);
+engine.resumeTorrent(id);
+```
+
+### Listen for status updates
+
+```dart
+engine.torrentUpdates.listen((Map<int, TorrentInfo> torrents) {
+  final t = torrents[id]!;
+  print('${t.name}');          // torrent name
+  print('${t.state.label}');   // "Downloading", "Seeding", etc.
+  print('${t.progress}');      // 0.0 – 1.0
+  print('${t.downloadRate}');  // bytes/sec
+  print('${t.uploadRate}');    // bytes/sec
+  print('${t.numPeers}');
+  print('${t.numSeeds}');
+  print('${t.hasMetadata}');   // true once file list is available
+  print('${t.totalDone}');     // bytes downloaded
+  print('${t.totalWanted}');   // bytes total
+});
+
+// Or get a snapshot right now
+final Map<int, TorrentInfo> current = engine.torrents;
+```
+
+### List files and start streaming
+
+```dart
+// Wait for hasMetadata == true, then:
+final files = engine.getFiles(id);  // List<FileInfo>
+
 for (final f in files) {
-  print('[${f.index}] ${f.name} — ${(f.size / 1024 / 1024).toStringAsFixed(1)} MB');
+  print('[${f.index}] ${f.name}');
+  print('  size: ${f.size} bytes');
+  print('  streamable: ${f.isStreamable}');
 }
 
-// Stream file at index 2
-final stream = LibtorrentFlutter.instance.startStream(torrentId, fileIndex: 2);
-print(stream.url);
+// Stream the largest streamable file (auto-selected)
+final StreamInfo stream = engine.startStream(id);
+
+// Stream a specific file by index
+final StreamInfo stream = engine.startStream(id, fileIndex: 2);
+
+// With a RAM cache limit — useful on mobile
+// A 500MB sliding window: the engine evicts old pieces as you watch,
+// keeping a 10% safety buffer behind playback so it never stutters.
+final StreamInfo stream = engine.startStream(
+  id,
+  fileIndex: 2,
+  maxCacheBytes: 500 * 1024 * 1024,  // 500 MB
+);
+
+print(stream.url);  // http://127.0.0.1:PORT/stream/...
+// Hand this URL to any player: media_kit, video_player, VLC, mpv, etc.
 ```
 
-### Monitoring streams
+### Monitor stream status
 
 ```dart
-LibtorrentFlutter.instance.streamUpdates.listen((streams) {
+engine.streamUpdates.listen((Map<int, StreamInfo> streams) {
   for (final s in streams.values) {
-    print('Stream ${s.id}: ready=${s.isReady}, buffer=${s.bufferPct}%');
+    print('url: ${s.url}');
+    print('ready: ${s.isReady}');       // true = player can connect
+    print('buffer: ${s.bufferPct}%');   // 0–100 buffered ahead
+    print('fileSize: ${s.fileSize}');
+    print('readHead: ${s.readHead}');   // current byte position
   }
 });
+
+// Check if a specific torrent is being streamed
+final bool active = engine.isStreaming(id);
+
+// Get info for a specific stream
+final StreamInfo? info = engine.getStreamInfo(streamId);
+
+// Stop a specific stream
+engine.stopStream(streamId);
+
+// Stop all streams for a torrent
+engine.stopAllStreamsForTorrent(torrentId);
 ```
 
 ### Cleanup
 
 ```dart
-// Stop streaming
-LibtorrentFlutter.instance.stopStream(streamId);
+// Clean up one torrent: stops its streams, removes it, deletes the files
+engine.disposeTorrent(id);  // returns false if already gone
 
-// Remove torrent (and delete files)
-LibtorrentFlutter.instance.removeTorrent(torrentId, deleteFiles: true);
+// Clean up everything — perfect for your exit button
+engine.disposeAll();
 
-// Shut down the engine
-await LibtorrentFlutter.instance.dispose();
+// Full shutdown — calls disposeAll(), destroys native session
+await engine.dispose();
 ```
 
-## Install
+### Speed limits
 
-Add to your `pubspec.yaml`:
-
-```yaml
-dependencies:
-  libtorrent_flutter:
-    git:
-      url: https://github.com/ayman708-UX/libtorrent_flutter.git
+```dart
+engine.setDownloadLimit(2 * 1024 * 1024);  // 2 MB/s
+engine.setUploadLimit(512 * 1024);          // 512 KB/s
+engine.setDownloadLimit(0);                 // back to unlimited
 ```
 
-That's it. All native binaries for every platform are already bundled in the package. No vcpkg, no brew, no apt — just add and go.
+---
+
+## Platform setup
+
+No changes needed on Windows, Linux, and Android — everything is bundled.
+
+**macOS** — add the network entitlement to your `macos/Runner/*.entitlements`:
+
+```xml
+<key>com.apple.security.network.client</key>
+<true/>
+```
+
+**Android** — add to `AndroidManifest.xml`:
+
+```xml
+<uses-permission android:name="android.permission.INTERNET" />
+```
+
+**Android background streaming** — Android kills your app's process when it goes to the background unless you use a Foreground Service. When streaming, start one to keep the engine alive:
+
+```dart
+// Use flutter_foreground_task or a similar package
+FlutterForegroundTask.startService(
+  notificationTitle: 'Streaming',
+  notificationText: 'Torrent engine running',
+);
+```
+
+---
 
 ## How it works
 
-The whole thing is a single C++ file (`torrent_bridge.cpp`) that compiles everywhere using platform-specific socket ifdefs. Dart talks to it through FFI — no platform channels, no Kotlin, no Swift.
+A single C++ file (`torrent_bridge.cpp`) wraps libtorrent 2.0 and compiles to a native shared library on every platform. Dart talks to it via FFI — no platform channels, no Kotlin, no Swift.
 
-When you call `startStream()`, it boots a tiny HTTP server on localhost that serves the torrent data as a seekable byte-range response. Any video player that can handle HTTP range requests will work with it.
+When you call `startStream()`:
+1. The engine sets aggressive piece deadlines on the first **and** last 4MB of the file (so the player can seek from the start)
+2. A tiny HTTP server starts on `127.0.0.1` on a random free port
+3. The server responds to byte-range requests, blocking until each piece arrives from the network
+4. As you watch, a background loop continuously updates piece priorities around your playback position
+
+The stream URL works with any player that handles HTTP range requests.
+
+---
 
 ## License
 
-Source Available — see [LICENSE](LICENSE) for details.
-You can use this package in your apps. You cannot modify, fork, or redistribute the source code.
+Source Available — see [LICENSE](LICENSE).  
+You can use this package freely in your apps. You may not modify, fork, or redistribute the source code.
