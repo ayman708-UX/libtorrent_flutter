@@ -16,12 +16,12 @@ Pod::Spec.new do |s|
   s.swift_version = '5.0'
 
   # Check for prebuilt dylib first
-  prebuilt_relative = '../prebuilt/macos/universal/liblibtorrent_flutter.dylib'
-  prebuilt_absolute = File.join(__dir__, prebuilt_relative)
+  prebuilt_library  = 'liblibtorrent_flutter.dylib'
+  prebuilt_absolute = File.join(__dir__, prebuilt_library)
 
   if File.exist?(prebuilt_absolute)
     # Use prebuilt — just bundle the dylib, no compilation needed
-    s.vendored_libraries = prebuilt_relative
+    s.vendored_libraries = prebuilt_library
     s.source_files = 'Classes/**/*.swift'
   else
     # Build from source — needs Homebrew libtorrent

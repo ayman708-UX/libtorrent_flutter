@@ -105,6 +105,7 @@ jobs:
         run: |
           mkdir -p prebuilt/macos/universal
           cp build-macos/liblibtorrent_flutter.dylib prebuilt/macos/universal/
+          cp build-macos/liblibtorrent_flutter.dylib macos/
           ls -la prebuilt/macos/universal/
 
       - name: Setup Flutter
