@@ -38,7 +38,7 @@ jobs:
       - name: Copy to prebuilt
         run: |
           mkdir -p prebuilt/linux/x64
-          find build-linux -name "*.so" -exec cp {} prebuilt/linux/x64/ \;
+          find build-linux -name "liblibtorrent_flutter.so" -exec cp {} prebuilt/linux/x64/ \;
           ls -la prebuilt/linux/x64/
 
       - name: Setup Flutter

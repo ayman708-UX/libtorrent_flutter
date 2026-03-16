@@ -137,6 +137,6 @@ set_target_properties(libtorrent_flutter PROPERTIES
 if(NOT WIN32)
     set_target_properties(libtorrent_flutter PROPERTIES
         PREFIX ""
-        OUTPUT_NAME "libtorrent_flutter"
+        OUTPUT_NAME "liblibtorrent_flutter"
     )
 endif()
