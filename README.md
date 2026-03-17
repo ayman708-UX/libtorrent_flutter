@@ -1,10 +1,10 @@
 # libtorrent_flutter
 
-The only Flutter package wrapping **libtorrent 2.0** — the same C++ engine powering qBittorrent, Deluge, and Transmission. Add a magnet link, pick a file, get a stream URL. Works on Windows, Linux, macOS, and Android with zero setup — all native binaries are bundled.
+The only Flutter package wrapping **libtorrent 2.0** — the same C++ engine powering qBittorrent, Deluge, and Transmission. Add a magnet link, pick a file, get a stream URL. Works on Windows, Linux, macOS, iOS, and Android with zero setup — all native binaries are bundled.
 
 ```yaml
 dependencies:
-  libtorrent_flutter: ^1.3.0
+  libtorrent_flutter: ^1.4.0
 ```
 
 ---
@@ -166,6 +166,8 @@ engine.setDownloadLimit(0);                 // back to unlimited
 
 No changes needed on Windows, Linux, and Android — everything is bundled.
 
+**iOS** — add the network entitlement. In your `ios/Runner/Info.plist`, ensure your app allows outgoing connections (this is allowed by default on iOS, but if you use a custom `NetworkExtension` or have restrictive `NSAppTransportSecurity` settings, make sure HTTP to `localhost` is permitted).
+
 **macOS** — add the network entitlement to your `macos/Runner/*.entitlements`:
 
 ```xml
@@ -193,7 +195,7 @@ FlutterForegroundTask.startService(
 
 ## How it works
 
-A single C++ file (`torrent_bridge.cpp`) wraps libtorrent 2.0 and compiles to a native shared library on every platform. Dart talks to it via FFI — no platform channels, no Kotlin, no Swift.
+A single C++ file (`torrent_bridge.cpp`) wraps libtorrent 2.0 and compiles to a native static/shared library on every platform. Dart talks to it via FFI — no platform channels, no Kotlin, no Swift.
 
 When you call `startStream()`:
 1. The engine sets aggressive piece deadlines on the first **and** last 4MB of the file (so the player can seek from the start)

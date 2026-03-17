@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.0
+
+- **Platform**: Added iOS support
+
 ## 1.3.0
 
 - **Platform**: Added iOS support (arm64 device + x86_64 simulator, universal static library)
