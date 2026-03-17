@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.1
+
+- **Streaming**: Fixed serial pipeline stall after seek — `serve_range` now pre-primes the next 5 pieces with priority 7 and staggered deadlines before each `wait_for_piece` call, so the swarm downloads them in parallel instead of one at a time
+- **Streaming**: Reduced seek cooldown from 3s → 1s — the new serve_range lookahead covers the gap, so the priority loop can resume sooner and set broader readahead windows
+
 ## 1.6.0
 
 - **Streaming**: Rewrote priority system using torrest-cpp's proven priority-only-upgrade pattern — never downgrade piece priorities, staggered `i*10ms` deadlines for the hot window

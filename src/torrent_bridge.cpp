@@ -650,6 +650,7 @@ static bool serve_range(StreamSession* ss, socket_t cli,
             try { ss->handle.clear_piece_deadlines(); } catch (...) {}
 
             // Step 2: Record seek time so priority loop backs off for 1 second
+            //         (the serve_range lookahead covers the gap)
             ss->last_seek_time.store(
                 chr::duration_cast<chr::milliseconds>(
                     chr::steady_clock::now().time_since_epoch()).count());
@@ -681,6 +682,15 @@ static bool serve_range(StreamSession* ss, socket_t cli,
             int64_t sbeg  = std::max(cursor, pfbeg);
             int64_t send_ = std::min(bend,   pfend);
             if (send_ < sbeg) { cursor = pfend + 1; continue; }
+
+            // LOOKAHEAD: while we wait for piece p, pre-prime the next 5 pieces
+            // so the swarm is already fetching them in parallel. Without this,
+            // serve_range downloads ONE piece at a time (serial pipeline stall).
+            for (int ahead = 1; ahead <= 5 && (p + ahead) <= ss->last_piece; ++ahead) {
+                ss->handle.piece_priority(lt::piece_index_t(p + ahead), lt::download_priority_t{7});
+                if (!ss->piece_avail(p + ahead))
+                    ss->handle.set_piece_deadline(lt::piece_index_t(p + ahead), ahead * 10);
+            }
 
             PieceData pd = ss->wait_for_piece(p);
             if (!pd.ok || pd.bytes.empty()) return false;
@@ -849,11 +859,11 @@ static void run_http_server(std::shared_ptr<StreamSession> ss) {
 
 static void run_priority_loop(std::shared_ptr<StreamSession> ss) {
     while (ss->active.load()) {
-        // Skip priority updates for 3s after a seek — let seek-specific focus work
-        // without the readahead/hot windows stealing bandwidth
+        // Skip priority updates for 1s after a seek — serve_range's lookahead
+        // handles the immediate pipeline, then this loop sets broader windows
         auto now_ms = chr::duration_cast<chr::milliseconds>(
             chr::steady_clock::now().time_since_epoch()).count();
-        if (now_ms - ss->last_seek_time.load() > 3000) {
+        if (now_ms - ss->last_seek_time.load() > 1000) {
             try { ss->update_priorities(); } catch (...) {}
         }
         std::this_thread::sleep_for(chr::milliseconds(200));
