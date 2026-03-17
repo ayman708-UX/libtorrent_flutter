@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.2
+
+- **CRITICAL FIX**: Removed `force_recheck()` from cache eviction — it was re-hashing the ENTIRE torrent, marking ALL pieces (including currently streaming ones) as unknown, killing the stream
+- **Streaming**: Capped readahead window to 50% of cache capacity — prevents downloading so far ahead that the cache overflows and evicts data at the current playback position
+- **Streaming**: Hard safety floor — cache eviction NEVER evicts anything within 5 pieces of the current playhead, regardless of cache pressure
+
 ## 1.6.1
 
 - **Streaming**: Fixed serial pipeline stall after seek — `serve_range` now pre-primes the next 5 pieces with priority 7 and staggered deadlines before each `wait_for_piece` call, so the swarm downloads them in parallel instead of one at a time

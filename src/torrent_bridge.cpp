@@ -420,22 +420,27 @@ struct StreamSession {
 
             try { handle.unset_flags(lt::torrent_flags::sequential_download); } catch (...) {}
 
-            // ── Priority-only-upgrade pattern (torrest-cpp proven approach) ──
-            // Never downgrade a piece. Only set priorities/deadlines on pieces
-            // that need upgrading and aren't already downloaded.
+            // ── Cap readahead to cache size ──
+            // If cache is limited, don't download more pieces ahead than the
+            // cache can hold. Use 50% of cache for readahead, rest for safety.
+            int max_readahead = 15;  // default
+            if (max_cache_bytes > 0 && piece_length > 0) {
+                int cache_pieces = (int)(max_cache_bytes / piece_length);
+                // Use at most 50% of cache capacity for readahead
+                max_readahead = std::max(3, std::min(max_readahead, cache_pieces / 2));
+            }
 
             std::vector<lt::download_priority_t> prios;
             prios.resize((size_t)ti->num_pieces(), lt::dont_download);
 
-            // 1. Readahead buffer (15 pieces, priority 4, NO deadlines)
-            int readahead_end = std::min(current_piece + 15, last_piece);
+            // 1. Readahead buffer (capped to cache, priority 4)
+            int readahead_end = std::min(current_piece + max_readahead, last_piece);
             for (int p = current_piece; p <= readahead_end; ++p) {
                 prios[p] = lt::download_priority_t{4};
             }
 
-            // 2. Hot window (next 8 pieces, priority 7, staggered deadlines)
-            //    Torrest-cpp uses i*10ms stagger — proven to work well
-            int hot_end = std::min(current_piece + 8, last_piece);
+            // 2. Hot window (next 8, priority 7, staggered deadlines)
+            int hot_end = std::min(current_piece + std::min(8, max_readahead), last_piece);
             for (int p = current_piece; p <= hot_end; ++p) {
                 prios[p] = lt::download_priority_t{7};
                 if (!have(p)) {
@@ -444,7 +449,7 @@ struct StreamSession {
                 }
             }
 
-            // 3. Critical window (current + 5 pieces, priority 7, 0ms emergency)
+            // 3. Critical window (current + 5, priority 7, 0ms emergency)
             int crit_end = std::min(current_piece + 5, last_piece);
             for (int p = current_piece; p <= crit_end; ++p) {
                 prios[p] = lt::download_priority_t{7};
@@ -452,7 +457,14 @@ struct StreamSession {
                     handle.set_piece_deadline(lt::piece_index_t(p), 0);
             }
 
-            // ── Cache eviction: drop old pieces behind playhead ──
+            // ── Sliding window cache eviction ──
+            // NEVER use force_recheck — it nukes ALL piece state and kills
+            // the stream. Instead, just set evicted pieces to dont_download.
+            // Libtorrent won't re-download them, and the OS will reclaim
+            // the disk space when it needs it (mmap-backed in lt 2.0).
+            //
+            // HARD RULE: never evict anything >= (current_piece - 5).
+            // Always keep 5 pieces behind playhead as safety margin.
             if (max_cache_bytes > 0 && piece_length > 0) {
                 int have_count = 0;
                 for (int p = first_piece; p <= last_piece; ++p) {
@@ -461,17 +473,15 @@ struct StreamSession {
                 int64_t have_bytes = (int64_t)have_count * piece_length;
 
                 if (have_bytes > max_cache_bytes) {
-                    int evict_up_to = current_piece - safety_pieces;
-                    bool evicted = false;
-                    for (int p = first_piece; p < evict_up_to && p <= last_piece; ++p) {
+                    // Evict from the oldest (furthest behind playhead) first
+                    int safe_floor = current_piece - 5;
+                    for (int p = first_piece; p < safe_floor && p <= last_piece; ++p) {
                         if (have(p)) {
                             prios[p] = lt::dont_download;
-                            evicted = true;
                         }
                     }
-                    if (evicted) {
-                        try { handle.force_recheck(); } catch (...) {}
-                    }
+                    // No force_recheck! Pieces remain on disk but libtorrent
+                    // won't track or re-download them.
                 }
             }
 
