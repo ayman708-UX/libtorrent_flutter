@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.6.0
+
+- **Streaming**: Rewrote priority system using torrest-cpp's proven priority-only-upgrade pattern — never downgrade piece priorities, staggered `i*10ms` deadlines for the hot window
+- **Streaming**: Increased critical window from 3 → 5 pieces at deadline=0ms for faster initial playback
+- **Streaming**: Total seek focus — on seek, all piece priorities are wiped and ONLY the seek position + 3 pieces get deadline=0ms with a 3-second cooldown before the priority loop resumes
+- **Streaming**: `wait_for_piece` timeout increased from 15s → 120s to prevent "Stream ends prematurely" errors during slow torrent startup
+- **Streaming**: Reduced readahead buffer from 30 → 15 pieces to concentrate bandwidth closer to the playhead
+- **Engine**: Added `no_recheck_incomplete_resume` — skips file recheck on resume for faster startup
+- **Engine**: Added `allow_multiple_connections_per_ip` — connects to seedboxes, VPNs, and shared NAT peers
+- **Engine**: Added `peer_connect_timeout=3s` for faster peer handshakes
+- **Engine**: Tuned timeouts to stop peer churn (`piece_timeout` 2→5s, `request_timeout` 2→4s, `peer_timeout` 5→10s) — proven by libtorrent issue #7666, torrest, and Elementum
+- **Engine**: `whole_pieces_threshold` increased 5 → 20, forcing fast peers to complete whole pieces instead of scattering blocks
+
 ## 1.5.0
 
 - **Streaming**: Removed speculative tail preloading — the engine no longer downloads the last 4MB of a file at startup. Modern players (MPV, VLC, etc.) fetch container metadata (MP4 moov atom, MKV cues) on-demand via HTTP range requests, which the built-in server already supports

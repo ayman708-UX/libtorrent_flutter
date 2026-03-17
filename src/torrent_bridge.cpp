@@ -312,7 +312,7 @@ struct StreamSession {
     }
 
     // Wait for a piece, issuing read_piece() or set_piece_deadline() to libtorrent
-    PieceData wait_for_piece(int p, int total_timeout_ms = 15000) {
+    PieceData wait_for_piece(int p, int total_timeout_ms = 120000) {
         if (!handle.is_valid()) return {};
 
         // Fast path: piece already available — read it immediately
@@ -407,74 +407,68 @@ struct StreamSession {
             int64_t head = read_head.load();
             int current_piece = std::clamp(byte_to_piece(head), first_piece, last_piece);
 
-            // OPTIMIZED: Fetch bitfield ONCE and cache it for the whole update
+            // Fetch bitfield ONCE and cache it for the whole update
             lt::bitfield pieces_bf;
             try {
                 pieces_bf = handle.status(lt::torrent_handle::query_pieces).pieces;
             } catch (...) { return; }
 
-            auto piece_avail_fast = [&](int p) -> bool {
+            auto have = [&](int p) -> bool {
                 if (p < 0 || p >= (int)pieces_bf.size()) return false;
                 return pieces_bf.get_bit(p);
             };
 
-            // Do NOT use sequential_download — it conflicts with set_piece_deadline()
-            // libtorrent docs: "Using set_piece_deadline is incompatible with sequential_download mode."
             try { handle.unset_flags(lt::torrent_flags::sequential_download); } catch (...) {}
+
+            // ── Priority-only-upgrade pattern (torrest-cpp proven approach) ──
+            // Never downgrade a piece. Only set priorities/deadlines on pieces
+            // that need upgrading and aren't already downloaded.
 
             std::vector<lt::download_priority_t> prios;
             prios.resize((size_t)ti->num_pieces(), lt::dont_download);
 
-            // ── Lean readahead — only what's needed for smooth playback ──
-
-            // 1. Readahead buffer (30 pieces, ~60MB, priority 4, NO deadlines)
-            //    These download in the background but don't steal bandwidth from critical pieces
-            int readahead_end = std::min(current_piece + 30, last_piece);
+            // 1. Readahead buffer (15 pieces, priority 4, NO deadlines)
+            int readahead_end = std::min(current_piece + 15, last_piece);
             for (int p = current_piece; p <= readahead_end; ++p) {
                 prios[p] = lt::download_priority_t{4};
             }
 
-            // 2. Hot window (next 10 pieces, priority 7, 150ms deadline)
-            int hot_end = std::min(current_piece + 10, last_piece);
+            // 2. Hot window (next 8 pieces, priority 7, staggered deadlines)
+            //    Torrest-cpp uses i*10ms stagger — proven to work well
+            int hot_end = std::min(current_piece + 8, last_piece);
             for (int p = current_piece; p <= hot_end; ++p) {
                 prios[p] = lt::download_priority_t{7};
-                if (!piece_avail_fast(p))
-                    handle.set_piece_deadline(lt::piece_index_t(p), 150);
+                if (!have(p)) {
+                    int offset = p - current_piece;
+                    handle.set_piece_deadline(lt::piece_index_t(p), offset * 10);
+                }
             }
 
-            // 3. Critical window (current + 3 pieces, priority 7, 0ms emergency)
-            int crit_end = std::min(current_piece + 3, last_piece);
+            // 3. Critical window (current + 5 pieces, priority 7, 0ms emergency)
+            int crit_end = std::min(current_piece + 5, last_piece);
             for (int p = current_piece; p <= crit_end; ++p) {
                 prios[p] = lt::download_priority_t{7};
-                if (!piece_avail_fast(p))
+                if (!have(p))
                     handle.set_piece_deadline(lt::piece_index_t(p), 0);
             }
 
-            // File anchors REMOVED — tail pieces are fetched on-demand when the
-            // player issues a range request for container metadata (moov/cues).
-            // Pre-fetching them here steals bandwidth from the playhead.
-
             // ── Cache eviction: drop old pieces behind playhead ──
             if (max_cache_bytes > 0 && piece_length > 0) {
-                // Count how many bytes we've downloaded for this file's piece range
                 int have_count = 0;
                 for (int p = first_piece; p <= last_piece; ++p) {
-                    if (piece_avail_fast(p)) ++have_count;
+                    if (have(p)) ++have_count;
                 }
                 int64_t have_bytes = (int64_t)have_count * piece_length;
 
                 if (have_bytes > max_cache_bytes) {
-                    // Evict pieces behind (playhead - safety_pieces)
                     int evict_up_to = current_piece - safety_pieces;
                     bool evicted = false;
                     for (int p = first_piece; p < evict_up_to && p <= last_piece; ++p) {
-                        if (piece_avail_fast(p)) {
+                        if (have(p)) {
                             prios[p] = lt::dont_download;
                             evicted = true;
                         }
                     }
-                    // Force recheck evicted pieces so libtorrent marks them as not-have
-                    // and the sparse file can reclaim space
                     if (evicted) {
                         try { handle.force_recheck(); } catch (...) {}
                     }
@@ -482,13 +476,11 @@ struct StreamSession {
             }
 
             handle.prioritize_pieces(prios);
-
-            // Mark ready immediately — HTTP server will block until data arrives
             is_ready.store(true);
-            
+
             int hw_total = (crit_end - current_piece + 1);
             int hw_avail = 0;
-            for (int p = current_piece; p <= crit_end; ++p) if (piece_avail_fast(p)) ++hw_avail;
+            for (int p = current_piece; p <= crit_end; ++p) if (have(p)) ++hw_avail;
             buffer_pct.store(hw_total > 0 ? (hw_avail * 100 / hw_total) : 0);
         } catch (...) {}
     }
@@ -662,14 +654,18 @@ static bool serve_range(StreamSession* ss, socket_t cli,
                 chr::duration_cast<chr::milliseconds>(
                     chr::steady_clock::now().time_since_epoch()).count());
 
-            // Step 3: Blast the first 8 pieces at new position with staggered 0ms deadlines
+            // Step 3: TOTAL FOCUS — set ONLY current + 3 pieces at deadline 0ms.
+            // Wipe all priorities so absolutely nothing else downloads.
             try {
-                for (int i = 0; i <= 8 && (seek_piece + i) <= ss->last_piece; ++i) {
-                    int dl = i * 30; // 0, 30, 60, 90... 240ms
-                    ss->handle.set_piece_deadline(lt::piece_index_t(seek_piece + i), dl,
+                std::vector<lt::download_priority_t> prios(
+                    (size_t)ss->ti->num_pieces(), lt::dont_download);
+                int focus_end = std::min(seek_piece + 3, ss->last_piece);
+                for (int i = seek_piece; i <= focus_end; ++i) {
+                    prios[i] = lt::download_priority_t{7};
+                    ss->handle.set_piece_deadline(lt::piece_index_t(i), 0,
                                                   lt::torrent_handle::alert_when_available);
-                    ss->handle.piece_priority(lt::piece_index_t(seek_piece + i), lt::download_priority_t{7});
                 }
+                ss->handle.prioritize_pieces(prios);
             } catch (...) {}
         }
 
@@ -853,10 +849,11 @@ static void run_http_server(std::shared_ptr<StreamSession> ss) {
 
 static void run_priority_loop(std::shared_ptr<StreamSession> ss) {
     while (ss->active.load()) {
-        // Skip priority updates for 1s after a seek — let seek-specific deadlines work
+        // Skip priority updates for 3s after a seek — let seek-specific focus work
+        // without the readahead/hot windows stealing bandwidth
         auto now_ms = chr::duration_cast<chr::milliseconds>(
             chr::steady_clock::now().time_since_epoch()).count();
-        if (now_ms - ss->last_seek_time.load() > 1000) {
+        if (now_ms - ss->last_seek_time.load() > 3000) {
             try { ss->update_priorities(); } catch (...) {}
         }
         std::this_thread::sleep_for(chr::milliseconds(200));
@@ -902,12 +899,20 @@ TORRENT_API lt_session_handle lt_create_session(const char* iface,
         sp.set_bool(lt::settings_pack::smooth_connects,          false);
         sp.set_int (lt::settings_pack::torrent_connect_boost,     200);
 
-        // Zero-latency timeouts
-        sp.set_int (lt::settings_pack::request_timeout,           2);
-        sp.set_int (lt::settings_pack::peer_timeout,              5);
+        // Streaming-tuned timeouts (issue #7666, torrest, Elementum all use 5-10s)
+        // 2s was causing peer churn — slow but valuable peers got dropped mid-piece
+        sp.set_int (lt::settings_pack::request_timeout,           4);
+        sp.set_int (lt::settings_pack::peer_timeout,              10);
         sp.set_int (lt::settings_pack::min_reconnect_time,        1);
-        sp.set_int (lt::settings_pack::piece_timeout,              2);
+        sp.set_int (lt::settings_pack::piece_timeout,              5);
         sp.set_int (lt::settings_pack::inactivity_timeout,        10);
+        sp.set_int (lt::settings_pack::peer_connect_timeout,      3);
+
+        // Skip full file recheck on resume — network is faster than disk verify
+        sp.set_bool(lt::settings_pack::no_recheck_incomplete_resume, true);
+
+        // Allow multiple connections from same IP (seedboxes, VPNs, shared NAT)
+        sp.set_bool(lt::settings_pack::allow_multiple_connections_per_ip, true);
 
         // Security / Throttling evasion
         sp.set_int (lt::settings_pack::in_enc_policy,             lt::settings_pack::pe_enabled);
@@ -916,9 +921,9 @@ TORRENT_API lt_session_handle lt_create_session(const char* iface,
 
         // Piece Picking & Throughput
         sp.set_bool(lt::settings_pack::predictive_piece_announce, false);
-        sp.set_int (lt::settings_pack::whole_pieces_threshold,    5);
+        sp.set_int (lt::settings_pack::whole_pieces_threshold,    20); // force fast peers to finish whole pieces
         sp.set_bool(lt::settings_pack::prioritize_partial_pieces, true);
-        sp.set_bool(lt::settings_pack::strict_end_game_mode,      false); // max peer usage
+        sp.set_bool(lt::settings_pack::strict_end_game_mode,      false); // duplicate requests for critical pieces
 
         // Extreme Disk & Buffer settings
         sp.set_int (lt::settings_pack::max_out_request_queue,     5000);
@@ -932,7 +937,6 @@ TORRENT_API lt_session_handle lt_create_session(const char* iface,
 
         // Note: cache_size was removed in libtorrent 2.0 — the OS handles caching via mmap.
         // Keep uTP enabled — many NAT'd peers only support uTP, disabling it shrinks the peer pool
-        // The loopback HTTP server uses TCP regardless, so uTP peer connections don't affect local latency
 
         // Aggressive per-peer requesting: target 1s of queue instead of default 3s
         sp.set_int (lt::settings_pack::request_queue_time,        1);

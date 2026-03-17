@@ -4,7 +4,7 @@ The only Flutter package wrapping **libtorrent 2.0** — the same C++ engine pow
 
 ```yaml
 dependencies:
-  libtorrent_flutter: ^1.5.0
+  libtorrent_flutter: ^1.6.0
 ```
 
 ---
