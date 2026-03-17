@@ -450,17 +450,9 @@ struct StreamSession {
                     handle.set_piece_deadline(lt::piece_index_t(p), 0);
             }
 
-            // 4. File anchors (first 2 + last 2 pieces for container metadata)
-            for (int p = first_piece; p <= first_piece + 1 && p <= last_piece; ++p) {
-                prios[p] = lt::download_priority_t{7};
-                if (!piece_avail_fast(p))
-                    handle.set_piece_deadline(lt::piece_index_t(p), 0);
-            }
-            for (int p = std::max(first_piece, last_piece - 1); p <= last_piece; ++p) {
-                prios[p] = lt::download_priority_t{7};
-                if (!piece_avail_fast(p))
-                    handle.set_piece_deadline(lt::piece_index_t(p), 0);
-            }
+            // File anchors REMOVED — tail pieces are fetched on-demand when the
+            // player issues a range request for container metadata (moov/cues).
+            // Pre-fetching them here steals bandwidth from the playhead.
 
             // ── Cache eviction: drop old pieces behind playhead ──
             if (max_cache_bytes > 0 && piece_length > 0) {
@@ -1306,26 +1298,12 @@ TORRENT_API lt_stream_id lt_start_stream(lt_session_handle session,
         handle.unset_flags(lt::torrent_flags::stop_when_ready);
         handle.resume();
 
-        // DUAL-END PRELOAD: grab start AND end of file simultaneously.
-        // MP4/MKV store their seek table (moov atom) at the END of the file.
-        // Without the tail pieces, players refuse to seek and buffer the whole file.
-        const int64_t PRELOAD_BYTES = 4 * 1024 * 1024; // 4 MB each end
-        int preload_pieces = std::max(4,
-            (int)(PRELOAD_BYTES / std::max((int64_t)1, (int64_t)ss->piece_length)));
-
-        // HEAD: first ~4 MB — staggered so libtorrent fetches in order
-        int head_end = std::min(ss->first_piece + preload_pieces, ss->last_piece);
+        // HEAD-ONLY PRELOAD: focus 100% of startup bandwidth on the first pieces.
+        // Modern players (MPV, VLC) fetch container metadata (moov/cues) themselves
+        // via HTTP range requests — our server already supports this. Pre-fetching
+        // the tail speculative splits bandwidth and delays startup.
+        int head_end = std::min(ss->first_piece + 8, ss->last_piece);
         for (int i = ss->first_piece; i <= head_end; ++i) {
-            int ms = (i - ss->first_piece) * 30; // 0, 30, 60 ... ms
-            handle.set_piece_deadline(lt::piece_index_t(i), ms,
-                                      lt::torrent_handle::alert_when_available);
-            handle.piece_priority(lt::piece_index_t(i), lt::download_priority_t{7});
-        }
-
-        // TAIL: last ~4 MB — fetch in parallel at 0ms deadline
-        // These contain the moov atom / index needed for instant seeking
-        int tail_start = std::max(ss->last_piece - preload_pieces, head_end + 1);
-        for (int i = tail_start; i <= ss->last_piece; ++i) {
             handle.set_piece_deadline(lt::piece_index_t(i), 0,
                                       lt::torrent_handle::alert_when_available);
             handle.piece_priority(lt::piece_index_t(i), lt::download_priority_t{7});

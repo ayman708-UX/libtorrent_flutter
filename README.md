@@ -4,7 +4,7 @@ The only Flutter package wrapping **libtorrent 2.0** — the same C++ engine pow
 
 ```yaml
 dependencies:
-  libtorrent_flutter: ^1.4.0
+  libtorrent_flutter: ^1.5.0
 ```
 
 ---
@@ -15,7 +15,7 @@ Every other Flutter torrent package uses either a Java wrapper (Android-only) or
 
 - **`set_piece_deadline`** — tells the engine "I need this piece in 150ms", and it picks the fastest peer automatically. Far smarter than simple sequential download.
 - **uTP support** — connects to peers behind NAT that other clients can't reach.
-- **Dual-end preloading** — fetches the start AND end of every file immediately. MP4/MKV store their seek table at the end; without it, players buffer the whole file before seeking works.
+- **On-demand streaming** — focuses 100% of startup bandwidth on the first pieces. Container metadata (MP4 moov, MKV cues) is fetched reactively when the player requests it via HTTP range requests, cutting startup time to seconds.
 - **DHT + PEX + LSD** — finds peers without trackers.
 
 ## Usage
@@ -198,10 +198,11 @@ FlutterForegroundTask.startService(
 A single C++ file (`torrent_bridge.cpp`) wraps libtorrent 2.0 and compiles to a native static/shared library on every platform. Dart talks to it via FFI — no platform channels, no Kotlin, no Swift.
 
 When you call `startStream()`:
-1. The engine sets aggressive piece deadlines on the first **and** last 4MB of the file (so the player can seek from the start)
+1. The engine sets deadline=0ms on the first 8 pieces — 100% of bandwidth goes to getting the start of the file as fast as possible
 2. A tiny HTTP server starts on `127.0.0.1` on a random free port
-3. The server responds to byte-range requests, blocking until each piece arrives from the network
-4. As you watch, a background loop continuously updates piece priorities around your playback position
+3. The server responds to byte-range requests, blocking until each piece arrives from the swarm
+4. When the player needs container metadata (moov atom, cues) from the end of the file, it sends a range request — the engine fetches those pieces on-demand at maximum priority
+5. A background loop continuously updates piece priorities around your playback position
 
 The stream URL works with any player that handles HTTP range requests.
 

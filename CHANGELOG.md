@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.0
+
+- **Streaming**: Removed speculative tail preloading — the engine no longer downloads the last 4MB of a file at startup. Modern players (MPV, VLC, etc.) fetch container metadata (MP4 moov atom, MKV cues) on-demand via HTTP range requests, which the built-in server already supports
+- **Streaming**: Head-only preload now sets 8 pieces at flat deadline=0ms instead of staggered 30ms intervals, focusing 100% of startup bandwidth on the beginning of the file
+- **Streaming**: Removed file anchor logic from the priority loop that re-prioritized the last 2 pieces every 200ms, which competed with the playhead for bandwidth
+- **Performance**: Startup time reduced from ~30–60s to ~5–15s by eliminating bandwidth competition between head and tail piece downloads
+
 ## 1.4.0
 
 - **Platform**: Added iOS support
