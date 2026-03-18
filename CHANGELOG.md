@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.6.3
+
+- **Streaming**: Instant start — staggered piece deadlines (0ms, 500ms, 1000ms…) on startup instead of flat 0ms for all. libtorrent's time-critical picker now funnels all bandwidth to piece 0 first, so playback can begin as soon as 1 piece arrives instead of waiting for 8
+- **Streaming**: Shrunk critical window from 6 pieces → 2, hot window from 9 → 5, readahead from 15 → 6 — concentrates bandwidth on the most urgent data per libtorrent's streaming docs: "any block you request that is not urgent takes away bandwidth from urgent pieces"
+- **Streaming**: Buffer percentage now based on the 2-piece critical window — reports "ready" faster since it no longer waits for 6 pieces
+- **Seeking**: Tighter seek focus — 2 pieces at staggered near-zero deadlines + 2 more at 200ms stagger (was 4 all at 0ms), reducing bandwidth dilution on seek
+- **Seeking**: Seek cooldown reduced from 1000ms → 100ms — priority loop resumes almost immediately after a seek instead of staying blind for a full second
+- **Seeking**: Wait timeout reduced from 120s → 30s — fails faster on dead peers instead of hanging
+- **Performance**: Priority loop now runs every 100ms (was 200ms) for faster reaction to playback position changes
+- **Performance**: libtorrent `tick_interval` set to 100ms (was 500ms default) — internal scheduler reacts 5x faster to deadline changes and priority updates
+- **Serve**: Inline lookahead reduced from 5 → 3 pieces with 100ms stagger (was 10ms) — less bandwidth competition with the current piece
+
 ## 1.6.2
 
 - **CRITICAL FIX**: Removed `force_recheck()` from cache eviction — it was re-hashing the ENTIRE torrent, marking ALL pieces (including currently streaming ones) as unknown, killing the stream
