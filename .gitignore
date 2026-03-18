@@ -1,0 +1,33 @@
+# libtorrent_flutter .gitignore
+
+# Build outputs
+build/
+build-*/
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+
+# Flutter/Dart
+.dart_tool/
+.packages
+.pub/
+pubspec.lock
+
+# macOS
+.DS_Store
+/macos/Pods/
+/macos/*.xcworkspace/
+/macos/*.xcodeproj/
+
+# Android
+android/.gradle/
+android/local.properties
+
+# Do NOT ignore prebuilt/ — those are the bundled native libs
+# !prebuilt/
+
+# Temporary
+*.log
+*.tmp
