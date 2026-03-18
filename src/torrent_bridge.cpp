@@ -772,64 +772,68 @@ static void handle_conn(socket_t cli, std::shared_ptr<StreamSession> ss) {
     ::setsockopt(cli, SOL_SOCKET, SO_SNDBUF, (const char*)&sndbuf, sizeof(sndbuf));
 
     try {
-        while (ss->active.load()) {
-            // OPTIMIZED: Bulk receive instead of 1-byte-at-a-time loop
-            char buf[8192] = {};
-            int  total = 0;
-            while (total < (int)sizeof(buf) - 1 && ss->active.load()) {
-                int n = ::recv(cli, buf + total, (int)sizeof(buf) - 1 - total, 0);
-                if (n <= 0) break;
-                total += n;
-                // Search for \r\n\r\n header terminator
-                if (total >= 4) {
-                    bool found = false;
-                    for (int i = total - 4; i >= 0; --i) {
-                        if (buf[i]=='\r' && buf[i+1]=='\n' && buf[i+2]=='\r' && buf[i+3]=='\n') {
-                            found = true; break;
-                        }
+        // Single request per connection — VLC and other players handle this
+        // correctly by opening a new TCP connection for each range request.
+        // This avoids the keep-alive mismatch where the server closes the
+        // socket but the client thinks it's still alive.
+        char buf[8192] = {};
+        int  total = 0;
+        while (total < (int)sizeof(buf) - 1 && ss->active.load()) {
+            int n = ::recv(cli, buf + total, (int)sizeof(buf) - 1 - total, 0);
+            if (n <= 0) break;
+            total += n;
+            // Search for \r\n\r\n header terminator
+            if (total >= 4) {
+                bool found = false;
+                for (int i = total - 4; i >= 0; --i) {
+                    if (buf[i]=='\r' && buf[i+1]=='\n' && buf[i+2]=='\r' && buf[i+3]=='\n') {
+                        found = true; break;
                     }
-                    if (found) break;
                 }
+                if (found) break;
             }
-            if (total == 0) break;
-
+        }
+        if (total > 0 && ss->active.load()) {
             HttpReq req = parse_req(buf, total);
             std::string s(buf, (size_t)total);
-            if (s.find("GET /stream/") == std::string::npos && s.find("HEAD /stream/") == std::string::npos) break;
+            bool is_head = s.find("HEAD /stream/") != std::string::npos;
+            bool is_get  = s.find("GET /stream/")  != std::string::npos;
 
-            int64_t fsz = ss->file_size;
-            if (fsz <= 0) break;
+            if (is_get || is_head) {
+                int64_t fsz = ss->file_size;
+                if (fsz > 0) {
+                    int64_t rstart = (req.has_range && req.range_start >= 0) ? req.range_start : 0;
+                    int64_t rend   = (req.has_range && req.range_end   >= 0) ? req.range_end   : fsz - 1;
+                    rstart = std::clamp(rstart, (int64_t)0, fsz - 1);
+                    rend   = std::clamp(rend,   rstart,     fsz - 1);
+                    int64_t clen  = rend - rstart + 1;
+                    bool    isrng = req.has_range && req.range_start >= 0;
 
-            int64_t rstart = (req.has_range && req.range_start >= 0) ? req.range_start : 0;
-            int64_t rend   = (req.has_range && req.range_end   >= 0) ? req.range_end   : fsz - 1;
-            rstart = std::clamp(rstart, (int64_t)0, fsz - 1);
-            rend   = std::clamp(rend,   rstart,     fsz - 1);
-            int64_t clen  = rend - rstart + 1;
-            bool    isrng = req.has_range && req.range_start >= 0;
+                    std::string filename = "video.mp4";
+                    if (ss->ti) try { filename = ss->ti->files().file_name(lt::file_index_t{ss->file_index}).to_string(); } catch(...) {}
 
-            std::string filename = "video.mp4";
-            if (ss->ti) try { filename = ss->ti->files().file_name(lt::file_index_t{ss->file_index}).to_string(); } catch(...) {}
+                    std::ostringstream hdr;
+                    if (isrng) {
+                        hdr << "HTTP/1.1 206 Partial Content\r\n";
+                        hdr << "Content-Range: bytes " << rstart << "-" << rend << "/" << fsz << "\r\n";
+                    } else {
+                        hdr << "HTTP/1.1 200 OK\r\n";
+                    }
+                    hdr << "Content-Type: " << get_mime(filename) << "\r\n";
+                    hdr << "Content-Length: " << clen << "\r\n";
+                    hdr << "Accept-Ranges: bytes\r\n";
+                    hdr << "Access-Control-Allow-Origin: *\r\n";
+                    hdr << "Cache-Control: no-store, no-cache\r\n";
+                    hdr << "Connection: close\r\n\r\n";
 
-            std::ostringstream hdr;
-            if (isrng) {
-                hdr << "HTTP/1.1 206 Partial Content\r\n";
-                hdr << "Content-Range: bytes " << rstart << "-" << rend << "/" << fsz << "\r\n";
-            } else {
-                hdr << "HTTP/1.1 200 OK\r\n";
+                    std::string h = hdr.str();
+                    if (::send(cli, h.c_str(), (int)h.size(), 0) > 0) {
+                        if (is_get) {
+                            serve_range(ss.get(), cli, rstart, rend, my_req_id);
+                        }
+                    }
+                }
             }
-            hdr << "Content-Type: " << get_mime(filename) << "\r\n";
-            hdr << "Content-Length: " << clen << "\r\n";
-            hdr << "Accept-Ranges: bytes\r\n";
-            hdr << "Access-Control-Allow-Origin: *\r\n";
-            hdr << "Cache-Control: no-store, no-cache\r\n";
-            hdr << "Connection: keep-alive\r\n\r\n";
-            
-            std::string h = hdr.str();
-            if (::send(cli, h.c_str(), (int)h.size(), 0) <= 0) break;
-            if (s.find("HEAD") != std::string::npos) break;
-
-            if (!serve_range(ss.get(), cli, rstart, rend, my_req_id)) break;
-            break; 
         }
     } catch (...) {}
     CLOSESOCKET(cli);

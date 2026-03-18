@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.4
+
+- **CRITICAL FIX**: HTTP server sent `Connection: keep-alive` but closed the socket after every request — VLC trusted the keep-alive promise, tried to reuse the dead connection, got a broken pipe, and rendered a black screen. Fixed by switching to `Connection: close`, which correctly tells the player to open a new TCP connection for each range request. This is the standard model used by other torrent streaming servers.
+- **Serve**: HEAD requests now return headers and close cleanly without falling through to the data-serving path
+- **Serve**: Removed redundant `while` loop around single-use connection handling — the code now clearly reflects the one-request-per-connection model
+
 ## 1.6.3
 
 - **Streaming**: Instant start — staggered piece deadlines (0ms, 500ms, 1000ms…) on startup instead of flat 0ms for all. libtorrent's time-critical picker now funnels all bandwidth to piece 0 first, so playback can begin as soon as 1 piece arrives instead of waiting for 8
