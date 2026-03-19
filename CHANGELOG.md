@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.7.0
+## 1.6.5
 
 - **CRITICAL FIX**: Concurrent connections (head + tail) were killing each other — every new HTTP connection overwrote a global request ID, instantly aborting the other. Players that open two connections (VLC, mpv, ExoPlayer) would loop endlessly until enough pieces were cached. Replaced with a seek-generation counter that only aborts stale connections on actual seeks
 - **FIX**: Tail/metadata range requests no longer hijack `read_head` — the priority loop stays focused on the playback position instead of jumping to the end of the file
