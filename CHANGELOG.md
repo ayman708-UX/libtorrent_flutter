@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.7.0
+
+- **CRITICAL FIX**: Concurrent connections (head + tail) were killing each other — every new HTTP connection overwrote a global request ID, instantly aborting the other. Players that open two connections (VLC, mpv, ExoPlayer) would loop endlessly until enough pieces were cached. Replaced with a seek-generation counter that only aborts stale connections on actual seeks
+- **FIX**: Tail/metadata range requests no longer hijack `read_head` — the priority loop stays focused on the playback position instead of jumping to the end of the file
+- **Streaming**: LRU piece cache (48 entries) — avoids repeated disk reads for recently served pieces
+- **Streaming**: Head + tail preload on stream start — first 5 pieces get staggered deadlines, last ~512KB is pre-fetched for container metadata (MKV cues, MP4 moov)
+- **Streaming**: Dynamic readahead window (8–40 pieces) scales with download speed, targeting ~15s of buffer
+- **Streaming**: Wider inline lookahead (6 pieces) with staggered deadlines during serve
+- **Seeking**: Cache invalidation on seek — evicts stale pieces, preserves tail pieces
+- **Seeking**: Wider post-seek focus (5 queued pieces instead of 2)
+- **Engine**: Fixed `suggest_mode` — was set as bool instead of the correct enum value
+- **Engine**: Fixed `torrent_connect_boost` exceeding documented max (255)
+- **Engine**: `mixed_mode_algorithm` set to `peer_proportional` — stops starving uTP peers behind NAT
+- **Engine**: Added DHT bootstrap nodes, `piece_extent_affinity`, `auto_sequential`
+- **Engine**: Tuned send buffer watermarks, peer turnover, socket buffer sizes
+- **Serve**: DLNA headers for smart TV compatibility
+- **Serve**: CORS OPTIONS preflight support
+- **Serve**: 2MB send buffer, 1MB send chunks
+- **Serve**: Case-insensitive HTTP Range header parsing
+- **Serve**: Adaptive priority loop interval (100ms buffering, 250ms steady)
+
 ## 1.6.4
 
 - **CRITICAL FIX**: HTTP server sent `Connection: keep-alive` but closed the socket after every request — VLC trusted the keep-alive promise, tried to reuse the dead connection, got a broken pipe, and rendered a black screen. Fixed by switching to `Connection: close`, which correctly tells the player to open a new TCP connection for each range request. This is the standard model used by other torrent streaming servers.
