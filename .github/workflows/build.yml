@@ -441,15 +441,14 @@ jobs:
             src/torrent_bridge.cpp
 
           cp "$LT_LIB" build-ios-sim-x86_64/libtorrent-rasterbar.a
-          cd build-ios-sim-x86_64
-          ar x libtorrent-rasterbar.a
-          mkdir -p lt_objects
-          mv *.o lt_objects/ 2>/dev/null || true
-          ar rcs liblibtorrent_flutter.a \
-            torrent_bridge.o \
-            lt_objects/*.o
-          cd ..
+          ar x build-ios-sim-x86_64/libtorrent-rasterbar.a
+          mkdir -p build-ios-sim-x86_64/lt_objects
+          mv *.o build-ios-sim-x86_64/lt_objects/ 2>/dev/null || true
+          ar rcs build-ios-sim-x86_64/liblibtorrent_flutter.a \
+            build-ios-sim-x86_64/torrent_bridge.o \
+            build-ios-sim-x86_64/lt_objects/*.o
 
+          ls -la build-ios-sim-x86_64/liblibtorrent_flutter.a
           echo "✅ iOS Simulator x86_64 static build succeeded"
 
       - name: Build libtorrent for iOS Simulator arm64 (Apple Silicon)
@@ -494,15 +493,14 @@ jobs:
             src/torrent_bridge.cpp
 
           cp "$LT_LIB" build-ios-sim-arm64/libtorrent-rasterbar.a
-          cd build-ios-sim-arm64
-          ar x libtorrent-rasterbar.a
-          mkdir -p lt_objects
-          mv *.o lt_objects/ 2>/dev/null || true
-          ar rcs liblibtorrent_flutter.a \
-            torrent_bridge.o \
-            lt_objects/*.o
-          cd ..
+          ar x build-ios-sim-arm64/libtorrent-rasterbar.a
+          mkdir -p build-ios-sim-arm64/lt_objects
+          mv *.o build-ios-sim-arm64/lt_objects/ 2>/dev/null || true
+          ar rcs build-ios-sim-arm64/liblibtorrent_flutter.a \
+            build-ios-sim-arm64/torrent_bridge.o \
+            build-ios-sim-arm64/lt_objects/*.o
 
+          ls -la build-ios-sim-arm64/liblibtorrent_flutter.a
           echo "✅ iOS Simulator arm64 static build succeeded"
 
       - name: Create XCFramework (device + universal simulator)
