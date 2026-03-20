@@ -401,7 +401,7 @@ jobs:
 
       - name: Build libtorrent for iOS Simulator x86_64
         run: |
-          cd libtorrent-src && mkdir build-sim && cd build-sim
+          cd libtorrent-src && mkdir build-sim-x86_64 && cd build-sim-x86_64
 
           SIM_SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
           cmake .. \
@@ -422,11 +422,11 @@ jobs:
 
       - name: Build torrent_bridge for iOS Simulator x86_64
         run: |
-          LT_LIB=$(find libtorrent-src/build-sim -name "libtorrent-rasterbar.a" | head -1)
+          LT_LIB=$(find libtorrent-src/build-sim-x86_64 -name "libtorrent-rasterbar.a" | head -1)
           BOOST_INC=$(brew --prefix boost)/include
           SIM_SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
 
-          mkdir -p build-ios-sim
+          mkdir -p build-ios-sim-x86_64
           clang++ -c -O2 -std=c++17 -fPIC \
             -target x86_64-apple-ios13.0-simulator \
             -isysroot $SIM_SDK \
@@ -435,38 +435,108 @@ jobs:
             -DTORRENT_USE_SSL=0 \
             -DBOOST_NO_IOSTREAM \
             -Ilibtorrent-src/include \
-            -Ilibtorrent-src/build-sim/include \
+            -Ilibtorrent-src/build-sim-x86_64/include \
             -I${BOOST_INC} \
-            -o build-ios-sim/torrent_bridge.o \
+            -o build-ios-sim-x86_64/torrent_bridge.o \
             src/torrent_bridge.cpp
 
-          cp "$LT_LIB" build-ios-sim/libtorrent-rasterbar.a
-          ar x build-ios-sim/libtorrent-rasterbar.a
-          mkdir -p build-ios-sim/lt_objects
-          mv *.o build-ios-sim/lt_objects/ 2>/dev/null || true
-          ar rcs build-ios-sim/liblibtorrent_flutter.a \
-            build-ios-sim/torrent_bridge.o \
-            build-ios-sim/lt_objects/*.o
+          cp "$LT_LIB" build-ios-sim-x86_64/libtorrent-rasterbar.a
+          cd build-ios-sim-x86_64
+          ar x libtorrent-rasterbar.a
+          mkdir -p lt_objects
+          mv *.o lt_objects/ 2>/dev/null || true
+          ar rcs liblibtorrent_flutter.a \
+            torrent_bridge.o \
+            lt_objects/*.o
+          cd ..
 
           echo "✅ iOS Simulator x86_64 static build succeeded"
 
-      - name: Create universal static library with lipo
+      - name: Build libtorrent for iOS Simulator arm64 (Apple Silicon)
         run: |
-          mkdir -p prebuilt/ios
-          lipo -create \
-            build-ios-arm64/liblibtorrent_flutter.a \
-            build-ios-sim/liblibtorrent_flutter.a \
-            -output prebuilt/ios/liblibtorrent_flutter.a
+          cd libtorrent-src && mkdir build-sim-arm64 && cd build-sim-arm64
 
-          lipo -info prebuilt/ios/liblibtorrent_flutter.a
-          ls -la prebuilt/ios/
-          echo "✅ Universal iOS static library created"
+          SIM_SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
+          cmake .. \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_SYSROOT=$SIM_SDK \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DBUILD_SHARED_LIBS=OFF \
+            -Ddeprecated-functions=OFF \
+            -Dencryption=OFF \
+            -DBOOST_ROOT=$(brew --prefix boost) \
+            -DBoost_INCLUDE_DIR=$(brew --prefix boost)/include \
+            -G Ninja -Wno-dev
+          ninja -j$(sysctl -n hw.ncpu)
+        timeout-minutes: 20
+
+      - name: Build torrent_bridge for iOS Simulator arm64
+        run: |
+          LT_LIB=$(find libtorrent-src/build-sim-arm64 -name "libtorrent-rasterbar.a" | head -1)
+          BOOST_INC=$(brew --prefix boost)/include
+          SIM_SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
+
+          mkdir -p build-ios-sim-arm64
+          clang++ -c -O2 -std=c++17 -fPIC \
+            -target arm64-apple-ios13.0-simulator \
+            -isysroot $SIM_SDK \
+            -DTORRENT_BRIDGE_EXPORTS \
+            -DTORRENT_NO_DEPRECATE \
+            -DTORRENT_USE_SSL=0 \
+            -DBOOST_NO_IOSTREAM \
+            -Ilibtorrent-src/include \
+            -Ilibtorrent-src/build-sim-arm64/include \
+            -I${BOOST_INC} \
+            -o build-ios-sim-arm64/torrent_bridge.o \
+            src/torrent_bridge.cpp
+
+          cp "$LT_LIB" build-ios-sim-arm64/libtorrent-rasterbar.a
+          cd build-ios-sim-arm64
+          ar x libtorrent-rasterbar.a
+          mkdir -p lt_objects
+          mv *.o lt_objects/ 2>/dev/null || true
+          ar rcs liblibtorrent_flutter.a \
+            torrent_bridge.o \
+            lt_objects/*.o
+          cd ..
+
+          echo "✅ iOS Simulator arm64 static build succeeded"
+
+      - name: Create XCFramework (device + universal simulator)
+        run: |
+          # Merge x86_64 + arm64 simulator slices into a fat simulator lib
+          mkdir -p build-ios-sim-universal
+          lipo -create \
+            build-ios-sim-x86_64/liblibtorrent_flutter.a \
+            build-ios-sim-arm64/liblibtorrent_flutter.a \
+            -output build-ios-sim-universal/liblibtorrent_flutter.a
+          lipo -info build-ios-sim-universal/liblibtorrent_flutter.a
+
+          # Prepare headers directory
+          mkdir -p build-ios-headers
+          cp src/torrent_bridge.h build-ios-headers/
+
+          # Create XCFramework with device + simulator
+          rm -rf prebuilt/ios/libtorrent_flutter.xcframework
+          xcodebuild -create-xcframework \
+            -library build-ios-arm64/liblibtorrent_flutter.a \
+            -headers build-ios-headers/ \
+            -library build-ios-sim-universal/liblibtorrent_flutter.a \
+            -headers build-ios-headers/ \
+            -output prebuilt/ios/libtorrent_flutter.xcframework
+
+          echo "=== XCFramework contents ==="
+          find prebuilt/ios/libtorrent_flutter.xcframework -type f | head -20
+          echo "✅ XCFramework created successfully"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ios-native-lib
-          path: prebuilt/ios/
+          path: prebuilt/ios/libtorrent_flutter.xcframework/
           retention-days: 90
 
   # ═══════════════════════════════════════════════════════════════════════════════
@@ -503,24 +573,31 @@ jobs:
           cp artifacts/android-native-lib-arm64-v8a/* prebuilt/android/arm64-v8a/ 2>/dev/null || true
           cp artifacts/android-native-lib-armeabi-v7a/* prebuilt/android/armeabi-v7a/ 2>/dev/null || true
           cp artifacts/android-native-lib-x86_64/* prebuilt/android/x86_64/ 2>/dev/null || true
-          cp artifacts/ios-native-lib/* prebuilt/ios/ 2>/dev/null || true
+
+          # Copy iOS XCFramework (artifact is the framework directory contents)
+          rm -rf prebuilt/ios/libtorrent_flutter.xcframework
+          mkdir -p prebuilt/ios/libtorrent_flutter.xcframework
+          cp -R artifacts/ios-native-lib/* prebuilt/ios/libtorrent_flutter.xcframework/ 2>/dev/null || true
+
+          # Copy XCFramework to ios/ for CocoaPods
+          rm -rf ios/libtorrent_flutter.xcframework
+          cp -R prebuilt/ios/libtorrent_flutter.xcframework ios/ 2>/dev/null || true
+          # Remove legacy .a if present
+          rm -f ios/liblibtorrent_flutter.a 2>/dev/null || true
 
           # Copy macOS dylib to macos/ for CocoaPods vendored_libraries
           cp prebuilt/macos/universal/liblibtorrent_flutter.dylib macos/ 2>/dev/null || true
 
-          # Copy iOS static lib to ios/ for CocoaPods vendored_libraries
-          cp prebuilt/ios/liblibtorrent_flutter.a ios/ 2>/dev/null || true
-
           echo "=== Prebuilt libs ==="
           find prebuilt -type f -exec ls -lh {} \;
           ls -la macos/*.dylib 2>/dev/null || true
-          ls -la ios/*.a 2>/dev/null || true
+          find ios/libtorrent_flutter.xcframework -type f 2>/dev/null | head -10 || true
 
       - name: Commit prebuilt libraries
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git add prebuilt/ macos/liblibtorrent_flutter.dylib ios/liblibtorrent_flutter.a
+          git add prebuilt/ macos/liblibtorrent_flutter.dylib ios/libtorrent_flutter.xcframework/
           git diff --cached --quiet && echo "No changes" || (
             git commit -m "ci: update prebuilt native libraries [skip ci]"
             git push

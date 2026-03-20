@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'libtorrent_flutter'
-  s.version          = '1.2.0'
+  s.version          = '1.6.7'
   s.summary          = 'Flutter plugin for libtorrent with built-in streaming server.'
   s.description      = <<-DESC
   Native libtorrent 2.0 bindings for Flutter with an integrated HTTP streaming server.
@@ -17,20 +17,22 @@ Pod::Spec.new do |s|
   s.swift_version = '5.0'
 
   # On iOS we must statically link — Apple does not allow dynamic libraries
-  # in App Store submissions. The prebuilt .a is a fat static lib containing
-  # libtorrent + torrent_bridge compiled for arm64.
-  prebuilt_library  = 'liblibtorrent_flutter.a'
-  prebuilt_absolute = File.join(__dir__, prebuilt_library)
+  # in App Store submissions. The XCFramework contains separate static libs
+  # for device (arm64-iphoneos) and simulator (arm64+x86_64-iphonesimulator).
+  xcframework_path = 'libtorrent_flutter.xcframework'
+  xcframework_absolute = File.join(__dir__, xcframework_path)
 
-  if File.exist?(prebuilt_absolute)
-    # Use prebuilt static library — no build tools needed
-    s.vendored_libraries = prebuilt_library
+  if File.exist?(xcframework_absolute)
+    # Use prebuilt XCFramework — supports both device and simulator
+    s.vendored_frameworks = xcframework_path
     s.source_files = 'Classes/**/*.swift'
     s.pod_target_xcconfig = {
       'DEFINES_MODULE' => 'YES',
       # Force the linker to include all symbols from the static lib
-      # so DynamicLibrary.process() can find them via dlsym()
-      'OTHER_LDFLAGS' => '-force_load "$(PODS_TARGET_SRCROOT)/liblibtorrent_flutter.a"',
+      # so DynamicLibrary.process() can find them via dlsym().
+      # Use conditional settings to select the correct XCFramework slice.
+      'OTHER_LDFLAGS[sdk=iphoneos*]' => '-force_load "$(PODS_TARGET_SRCROOT)/libtorrent_flutter.xcframework/ios-arm64/liblibtorrent_flutter.a"',
+      'OTHER_LDFLAGS[sdk=iphonesimulator*]' => '-force_load "$(PODS_TARGET_SRCROOT)/libtorrent_flutter.xcframework/ios-arm64_x86_64-simulator/liblibtorrent_flutter.a"',
     }
   else
     # Fallback: build from source (requires libtorrent headers + libs)

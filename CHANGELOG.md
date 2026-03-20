@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.7
+
+- **iOS**: Built XCFramework with both device (arm64-iphoneos) and simulator (arm64+x86_64-iphonesimulator) slices — iOS Simulator now works on Apple Silicon and Intel Macs
+- **iOS**: Replaced fat `.a` binary with `.xcframework` — Apple's recommended approach for multi-platform static libraries
+- **iOS**: Updated podspec to use `vendored_frameworks` with SDK-conditional `-force_load` linker flags
+- **CI**: Build workflow now compiles libtorrent + torrent_bridge for three iOS targets (arm64 device, arm64 simulator, x86_64 simulator) and packages them via `xcodebuild -create-xcframework`
+
 ## 1.6.6
 
 - **FIX (iOS)**: Added `SystemConfiguration` framework dependency to podspec — resolves `Undefined symbol: _SCNetworkReachabilityCreateWithAddress` linker errors when building for iOS release
