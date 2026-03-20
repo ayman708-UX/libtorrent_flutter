@@ -1,8 +1,16 @@
 # Exclude duplicate prebuilt binaries from pub.dev upload.
-# The actual platform links come from ios/, macos/, android/, windows/, linux/.
-# prebuilt/ios and prebuilt/macos are exact duplicates of ios/ and macos/.
+# iOS and macOS binaries live in ios/ and macos/ for CocoaPods.
+# Windows/Linux/Android need prebuilt/ because their CMake/Gradle files reference it.
 prebuilt/ios/
 prebuilt/macos/
+
+# Drop x86_64 Android ABI to stay under pub.dev's 100 MB uncompressed tar limit.
+# arm64-v8a + armeabi-v7a cover all real Android devices.
+# x86_64 = Intel Android emulators only (rare, can build from source).
+prebuilt/android/x86_64/
+
+# Legacy iOS static lib (replaced by xcframework)
+ios/liblibtorrent_flutter.a
 
 # CI and git files
 .github/
@@ -11,8 +19,13 @@ prebuilt/macos/
 # Build outputs
 build/
 build-*/
+android/.gradle/
+android/build/
+**/*.iml
 
 # Example app heavy platform files (keep lib/ and integration_test/)
-example/android/app/src/main/res/
-example/macos/Runner/Assets.xcassets/
-example/windows/runner/resources/
+example/android/
+example/windows/
+example/linux/
+example/macos/
+example/ios/
