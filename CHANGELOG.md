@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.6
+
+- **FIX (iOS)**: Added `SystemConfiguration` framework dependency to podspec — resolves `Undefined symbol: _SCNetworkReachabilityCreateWithAddress` linker errors when building for iOS release
+
 ## 1.6.5
 
 - **CRITICAL FIX**: Concurrent connections (head + tail) were killing each other — every new HTTP connection overwrote a global request ID, instantly aborting the other. Players that open two connections (VLC, mpv, ExoPlayer) would loop endlessly until enough pieces were cached. Replaced with a seek-generation counter that only aborts stale connections on actual seeks
