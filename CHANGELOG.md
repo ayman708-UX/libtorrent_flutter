@@ -1,11 +1,18 @@
 # Changelog
 
-## 1.6.7
+## 1.6.8
 
 - **iOS**: Built XCFramework with both device (arm64-iphoneos) and simulator (arm64+x86_64-iphonesimulator) slices — iOS Simulator now works on Apple Silicon and Intel Macs
 - **iOS**: Replaced fat `.a` binary with `.xcframework` — Apple's recommended approach for multi-platform static libraries
 - **iOS**: Updated podspec to use `vendored_frameworks` with SDK-conditional `-force_load` linker flags
 - **CI**: Build workflow now compiles libtorrent + torrent_bridge for three iOS targets (arm64 device, arm64 simulator, x86_64 simulator) and packages them via `xcodebuild -create-xcframework`
+- **Publish**: Dropped Android x86_64 prebuilt from pub package to stay under 100 MB limit
+
+
+
+## 1.6.6
+
+IOS fixes
 
 ## 1.6.6
 
