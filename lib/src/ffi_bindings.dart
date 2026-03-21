@@ -45,12 +45,15 @@ final class LtStreamStatus extends Struct {
   @Int64()    external int id;
   @Int64()    external int torrentId;
   @Int32()    external int fileIndex;
-  @Array(128) external Array<Char> url;
+  @Array(256) external Array<Char> url;
   @Int64()    external int fileSize;
   @Int64()    external int readHead;
-  @Int32()    external int bufferPct;
-  @Int32()    external int isReady;
-  @Int32()    external int isActive;
+  @Int32()    external int streamState;
+  @Float()    external double bufferSeconds;
+  @Int32()    external int bufferPieces;
+  @Int32()    external int readaheadWindow;
+  @Int32()    external int activePeers;
+  @Int32()    external int downloadRate;
 }
 
 // ─── Alert callback ───────────────────────────────────────────────────────────
@@ -73,6 +76,15 @@ typedef _PollAlertsN = Void Function(
     Pointer<NativeFunction<LtAlertCallbackNative>>,
     Pointer<Void>);
 typedef LtPollAlerts = void Function(
+    Pointer<LtSessionOpaque>,
+    Pointer<NativeFunction<LtAlertCallbackNative>>,
+    Pointer<Void>);
+
+typedef _SetAlertCallbackN = Void Function(
+    Pointer<LtSessionOpaque>,
+    Pointer<NativeFunction<LtAlertCallbackNative>>,
+    Pointer<Void>);
+typedef LtSetAlertCallback = void Function(
     Pointer<LtSessionOpaque>,
     Pointer<NativeFunction<LtAlertCallbackNative>>,
     Pointer<Void>);
@@ -132,9 +144,9 @@ typedef LtSetFilePriorities = void Function(
 
 // ─── Stream management ──────────────────────────────────────────────────────
 typedef _StartStreamN = Int64 Function(
-    Pointer<LtSessionOpaque>, Int64, Int32, Pointer<Int32>, Int64);
+    Pointer<LtSessionOpaque>, Int64, Int32, Int64);
 typedef LtStartStream = int Function(
-    Pointer<LtSessionOpaque>, int, int, Pointer<Int32>, int);
+    Pointer<LtSessionOpaque>, int, int, int);
 
 typedef _StopStreamN = Void Function(Pointer<LtSessionOpaque>, Int64);
 typedef LtStopStream = void Function(Pointer<LtSessionOpaque>, int);
@@ -200,6 +212,7 @@ class TorrentBridgeBindings {
   late final LtCreateSession      createSession;
   late final LtDestroySession     destroySession;
   late final LtPollAlerts         pollAlerts;
+  late final LtSetAlertCallback   setAlertCallback;
   late final LtAddMagnet          addMagnet;
   late final LtAddTorrentFile     addTorrentFile;
   late final LtRemoveTorrent      removeTorrent;
@@ -225,6 +238,7 @@ class TorrentBridgeBindings {
     createSession       = _lib.lookup<NativeFunction<_CreateSessionN>>('lt_create_session').asFunction<LtCreateSession>();
     destroySession      = _lib.lookup<NativeFunction<_DestroySessionN>>('lt_destroy_session').asFunction<LtDestroySession>();
     pollAlerts          = _lib.lookup<NativeFunction<_PollAlertsN>>('lt_poll_alerts').asFunction<LtPollAlerts>();
+    setAlertCallback    = _lib.lookup<NativeFunction<_SetAlertCallbackN>>('lt_set_alert_callback').asFunction<LtSetAlertCallback>();
     addMagnet           = _lib.lookup<NativeFunction<_AddMagnetN>>('lt_add_magnet').asFunction<LtAddMagnet>();
     addTorrentFile      = _lib.lookup<NativeFunction<_AddTorrentFileN>>('lt_add_torrent_file').asFunction<LtAddTorrentFile>();
     removeTorrent       = _lib.lookup<NativeFunction<_RemoveTorrentN>>('lt_remove_torrent').asFunction<LtRemoveTorrent>();

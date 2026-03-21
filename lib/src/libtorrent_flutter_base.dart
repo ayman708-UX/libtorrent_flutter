@@ -84,15 +84,18 @@ FileInfo _toFileInfo(LtFileInfo f) => FileInfo(
 );
 
 StreamInfo _toStreamInfo(LtStreamStatus s) => StreamInfo(
-  id:         s.id,
-  torrentId:  s.torrentId,
-  fileIndex:  s.fileIndex,
-  url:        readCharArray(s.url, 128),
-  fileSize:   s.fileSize,
-  readHead:   s.readHead,
-  bufferPct:  s.bufferPct,
-  isReady:    s.isReady != 0,
-  isActive:   s.isActive != 0,
+  id:              s.id,
+  torrentId:       s.torrentId,
+  fileIndex:       s.fileIndex,
+  url:             readCharArray(s.url, 256),
+  fileSize:        s.fileSize,
+  readHead:        s.readHead,
+  streamState:     streamStateFromInt(s.streamState),
+  bufferSeconds:   s.bufferSeconds,
+  bufferPieces:    s.bufferPieces,
+  readaheadWindow: s.readaheadWindow,
+  activePeers:     s.activePeers,
+  downloadRate:    s.downloadRate,
 );
 
 // ─── LibtorrentFlutter ──────────────────────────────────────────────────────
@@ -279,27 +282,22 @@ class LibtorrentFlutter {
   ///
   /// Returns [StreamInfo] with an HTTP URL that can be passed to any video player.
   /// [fileIndex] = -1 auto-selects the largest streamable file.
-  /// [maxCacheBytes] = 0 means unlimited. Set to e.g. 500*1024*1024 for 500MB limit.
+  /// [maxCacheBytes] controls how much RAM the piece cache uses (0 = default ~128MB).
   StreamInfo startStream(int torrentId, {int fileIndex = -1, int maxCacheBytes = 0}) {
-    final portBuf = calloc<Int32>();
+    final streamId = _b.startStream(_session, torrentId, fileIndex, maxCacheBytes);
+    if (streamId < 0) {
+      throw Exception('startStream failed: ${_b.lastError().toDartString()}');
+    }
+    final statusBuf = calloc<LtStreamStatus>();
     try {
-      final streamId = _b.startStream(_session, torrentId, fileIndex, portBuf, maxCacheBytes);
-      if (streamId < 0) {
-        throw Exception('startStream failed: ${_b.lastError().toDartString()}');
-      }
-      final statusBuf = calloc<LtStreamStatus>();
-      try {
-        final ok = _b.getStreamStatus(_session, streamId, statusBuf);
-        if (ok == 0) throw Exception('Failed to get stream status');
-        final info = _toStreamInfo(statusBuf.ref);
-        _streams[streamId] = info;
-        _streamsCtrl.add(Map.unmodifiable(_streams));
-        return info;
-      } finally {
-        calloc.free(statusBuf);
-      }
+      final ok = _b.getStreamStatus(_session, streamId, statusBuf);
+      if (ok == 0) throw Exception('Failed to get stream status');
+      final info = _toStreamInfo(statusBuf.ref);
+      _streams[streamId] = info;
+      _streamsCtrl.add(Map.unmodifiable(_streams));
+      return info;
     } finally {
-      calloc.free(portBuf);
+      calloc.free(statusBuf);
     }
   }
 
@@ -400,9 +398,10 @@ class LibtorrentFlutter {
         final info = _toStreamInfo(buf[i]);
         final old  = _streams[info.id];
         if (old == null ||
-            old.bufferPct != info.bufferPct ||
-            old.isReady   != info.isReady   ||
-            old.readHead  != info.readHead) {
+            old.streamState != info.streamState ||
+            old.bufferPieces != info.bufferPieces ||
+            old.readHead    != info.readHead ||
+            old.activePeers != info.activePeers) {
           _streams[info.id] = info;
           changed = true;
         }

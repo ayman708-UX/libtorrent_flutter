@@ -13,6 +13,26 @@ enum TorrentState {
   checkingResume,
 }
 
+/// Stream playback state.
+enum StreamState {
+  idle,
+  buffering,
+  ready,
+  seeking,
+  error,
+}
+
+StreamState streamStateFromInt(int v) {
+  switch (v) {
+    case 0: return StreamState.idle;
+    case 1: return StreamState.buffering;
+    case 2: return StreamState.ready;
+    case 3: return StreamState.seeking;
+    case 4: return StreamState.error;
+    default: return StreamState.idle;
+  }
+}
+
 /// Convert native integer state to [TorrentState].
 TorrentState stateFromInt(int v) {
   switch (v) {
@@ -135,31 +155,43 @@ class FileInfo {
       'size=$size, streamable=$isStreamable)';
 }
 
-/// Information about an active stream (includes the HTTP URL for playback).
+/// Information about an active stream.
 class StreamInfo {
   final int id;
   final int torrentId;
   final int fileIndex;
-
-  /// HTTP URL to pass to a video player (e.g. `http://127.0.0.1:PORT/stream/...`).
   final String url;
   final int fileSize;
   final int readHead;
-
-  /// 0-100 indicating how full the immediate buffer is.
-  final int bufferPct;
-  final bool isReady;
-  final bool isActive;
+  final StreamState streamState;
+  final double bufferSeconds;
+  final int bufferPieces;
+  final int readaheadWindow;
+  final int activePeers;
+  final int downloadRate;
 
   const StreamInfo({
     required this.id, required this.torrentId, required this.fileIndex,
     required this.url, required this.fileSize, required this.readHead,
-    required this.bufferPct, required this.isReady, required this.isActive,
+    required this.streamState, required this.bufferSeconds,
+    required this.bufferPieces, required this.readaheadWindow,
+    required this.activePeers, required this.downloadRate,
   });
 
+  bool get isReady => streamState == StreamState.ready;
+  bool get isBuffering => streamState == StreamState.buffering;
+  bool get isSeeking => streamState == StreamState.seeking;
+  bool get isActive => streamState != StreamState.idle && streamState != StreamState.error;
+
+  /// Backward-compatible buffer percentage (0.0–1.0).
+  /// Derived from bufferPieces relative to readaheadWindow.
+  double get bufferPct => readaheadWindow > 0
+      ? (bufferPieces / readaheadWindow).clamp(0.0, 1.0)
+      : 0.0;
+
   @override
-  String toString() => 'StreamInfo(id=$id, url=$url, buffer=$bufferPct%, '
-      'ready=$isReady, active=$isActive)';
+  String toString() => 'StreamInfo(id=$id, url=$url, state=$streamState, '
+      'buffer=${bufferSeconds.toStringAsFixed(1)}s, peers=$activePeers)';
 }
 
 // ─── Formatting Utilities ─────────────────────────────────────────────────────

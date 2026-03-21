@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.6.9
+
+- **Engine**: Complete rewrite of the C++ streaming engine — new priority system, HTTP server, and piece management
+- **Streaming**: 5-level priority gradient (NOW=7, NEXT=6, READAHEAD=5, BACK=1, SKIP=0) — only downloads the playback window and head/tail metadata, not the entire file
+- **Streaming**: `set_piece_deadline()` for time-critical downloads — pieces requested from multiple peers simultaneously, slow requests auto-cancelled
+- **Streaming**: Adaptive readahead window (3–50 pieces) grows with smooth playback, resets on seek
+- **Streaming**: 8-piece backward buffer keeps recently-played pieces available for quick rewinds
+- **Streaming**: Configurable RAM piece cache via `maxCacheBytes` — from 128MB for smart TVs to 2GB for desktops. Sliding window eviction with safe-zone protection around the playhead
+- **Seeking**: Threaded HTTP connection handler — new connections preempt old ones instantly via socket close, no more blocking the accept loop
+- **Seeking**: `clear_piece_deadlines()` on seek — immediately stops downloading for old position and redirects bandwidth to new target
+- **Seeking**: Aggressive seek deadlines (6 pieces at 200ms spacing) at the new position
+- **Seeking**: `seek_generation` counter aborts blocked piece waits within milliseconds
+- **Performance**: Condition-variable-based piece waiting — zero CPU polling
+- **Performance**: Alert-driven piece tracking via `piece_finished_alert` — no status polling for piece availability
+- **Performance**: Piece data cache with safe-zone (5 pieces around playhead never evicted), smart trim on seek preserves nearby cached data
+- **Tuning**: `max_failcount=3` — peers survive seek transitions instead of being dropped
+- **Tuning**: `peer_turnover` 5% every 30s — faster replacement of slow peers
+- **Tuning**: Connection flood on startup (`connection_speed=200`, `torrent_connect_boost=200`) for fast peer acquisition
+- **API**: `startStream()` now accepts `maxCacheBytes` to control RAM usage (0 = default ~128MB)
+- **API**: Backward-compatible `bufferPct` getter on `StreamInfo`
+- **API**: New `StreamState` enum (idle, buffering, ready, seeking, error) and `streamState` field on `StreamInfo`
+- **API**: New fields on `StreamInfo`: `bufferSeconds`, `bufferPieces`, `readaheadWindow`, `activePeers`, `downloadRate`
+- **Compat**: All existing API methods preserved — `addMagnet()`, `startStream()`, `stopStream()`, `disposeTorrent()`, etc. work unchanged
+
 ## 1.6.8
 
 - **iOS**: Built XCFramework with both device (arm64-iphoneos) and simulator (arm64+x86_64-iphonesimulator) slices — iOS Simulator now works on Apple Silicon and Intel Macs

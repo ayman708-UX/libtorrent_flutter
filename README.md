@@ -4,7 +4,7 @@ The only Flutter package wrapping **libtorrent 2.0** — the same C++ engine pow
 
 ```yaml
 dependencies:
-  libtorrent_flutter: ^1.6.8
+  libtorrent_flutter: ^1.6.9
 ```
 
 ---
@@ -198,11 +198,13 @@ FlutterForegroundTask.startService(
 A single C++ file (`torrent_bridge.cpp`) wraps libtorrent 2.0 and compiles to a native static/shared library on every platform. Dart talks to it via FFI — no platform channels, no Kotlin, no Swift.
 
 When you call `startStream()`:
-1. The engine sets staggered deadlines (0ms, 500ms, 1000ms…) on the first 5 pieces — piece 0 gets 100% of bandwidth first, so playback starts as soon as that single piece arrives
-2. A tiny HTTP server starts on `127.0.0.1` on a random free port
-3. The server responds to byte-range requests, blocking until each piece arrives from the swarm
-4. When the player needs container metadata (moov atom, cues) from the end of the file, it sends a range request — the engine fetches those pieces on-demand at maximum priority
-5. A background loop (100ms interval) continuously updates piece priorities with tight 2-piece critical + 5-piece hot windows around your playback position
+1. The engine sets piece deadlines on the first 6 pieces — piece 0 gets `set_piece_deadline(0)` triggering libtorrent's time-critical mode, which requests it from multiple peers simultaneously and cancels slow ones
+2. A tiny HTTP server starts on `127.0.0.1` on a random free port, running its own accept thread
+3. The server responds to byte-range requests, blocking via condition variables until each piece arrives — zero CPU polling
+4. When the player needs container metadata (moov atom, cues) from the end of the file, it sends a range request — the engine fetches those pieces on-demand with head/tail protection priorities
+5. A 5-level priority gradient (NOW=7, NEXT=6, READAHEAD=5, BACK=1, SKIP=0) keeps bandwidth focused on the playback window while maintaining a backward buffer for quick rewinds
+6. A configurable RAM piece cache serves repeated reads instantly, with safe-zone protection around the playhead and LRU eviction for distant pieces
+7. On seek, old piece deadlines are cleared immediately, new deadlines are set at the seek target with 200ms spacing, and the HTTP connection is preempted so the player's new request is accepted within milliseconds
 
 The stream URL works with any player that handles HTTP range requests.
 

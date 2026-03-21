@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:libtorrent_flutter/libtorrent_flutter.dart';
 
 void main() async {
@@ -27,6 +30,14 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   final _magnetCtrl = TextEditingController();
   final _engine = LibtorrentFlutter.instance;
+  final Set<int> _pendingStream = {};
+  StreamSubscription<Map<int, TorrentInfo>>? _metadataSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _metadataSub = _engine.torrentUpdates.listen(_checkPendingStreams);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -49,6 +60,11 @@ class _HomePageState extends State<HomePage> {
             FilledButton(
               onPressed: _addTorrent,
               child: const Text('Add'),
+            ),
+            const SizedBox(width: 4),
+            FilledButton.tonal(
+              onPressed: _streamOnly,
+              child: const Text('Stream'),
             ),
           ]),
           const SizedBox(height: 16),
@@ -75,10 +91,31 @@ class _HomePageState extends State<HomePage> {
   void _addTorrent() {
     final magnet = _magnetCtrl.text.trim();
     if (magnet.isEmpty) return;
-
-    // No save path needed — defaults to system temp
-    _engine.addMagnet(magnet, null, true);
+    _engine.addMagnet(magnet, null, false);
     _magnetCtrl.clear();
+  }
+
+  void _streamOnly() {
+    final magnet = _magnetCtrl.text.trim();
+    if (magnet.isEmpty) return;
+    final id = _engine.addMagnet(magnet, null, true);
+    _magnetCtrl.clear();
+    _pendingStream.add(id);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Waiting for metadata to start stream...')),
+    );
+  }
+
+  void _checkPendingStreams(Map<int, TorrentInfo> torrents) {
+    final ready = <int>[];
+    for (final id in _pendingStream) {
+      final t = torrents[id];
+      if (t != null && t.hasMetadata) ready.add(id);
+    }
+    for (final id in ready) {
+      _pendingStream.remove(id);
+      _startStream(id);
+    }
   }
 
   Widget _buildTorrentTile(TorrentInfo t) {
@@ -121,9 +158,14 @@ class _HomePageState extends State<HomePage> {
   void _startStream(int torrentId) {
     try {
       final info = _engine.startStream(torrentId);
+      Clipboard.setData(ClipboardData(text: info.url));
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Streaming: ${info.url}'),
+        content: Text('URL copied: ${info.url}'),
         duration: const Duration(seconds: 5),
+        action: SnackBarAction(
+          label: 'Copy',
+          onPressed: () => Clipboard.setData(ClipboardData(text: info.url)),
+        ),
       ));
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -135,6 +177,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    _metadataSub?.cancel();
     _magnetCtrl.dispose();
     super.dispose();
   }

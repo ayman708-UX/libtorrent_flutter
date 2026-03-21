@@ -2,10 +2,22 @@
 
 cmake_minimum_required(VERSION 3.14)
 cmake_policy(SET CMP0091 NEW)
+
+# vcpkg toolchain must be set before project()
+if(DEFINED ENV{VCPKG_ROOT} AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+    set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+        CACHE STRING "vcpkg toolchain")
+endif()
+
 project(libtorrent_flutter_native LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Help find_package locate vcpkg-installed packages
+if(DEFINED ENV{VCPKG_ROOT})
+    list(APPEND CMAKE_PREFIX_PATH "$ENV{VCPKG_ROOT}/installed/x64-windows")
+endif()
 
 add_library(libtorrent_flutter SHARED
     torrent_bridge.cpp
@@ -31,10 +43,6 @@ if(WIN32)
         NOMINMAX
         _WIN32_WINNT=0x0601
     )
-    if(DEFINED ENV{VCPKG_ROOT} AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
-        set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
-            CACHE STRING "vcpkg toolchain")
-    endif()
     find_package(LibtorrentRasterbar REQUIRED)
     target_link_libraries(libtorrent_flutter PRIVATE
         LibtorrentRasterbar::torrent-rasterbar
