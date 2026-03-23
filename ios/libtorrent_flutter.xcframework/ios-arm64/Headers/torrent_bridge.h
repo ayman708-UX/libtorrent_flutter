@@ -83,6 +83,31 @@ typedef struct {
     int32_t       download_rate;     /* bytes/s for this stream */
 } lt_stream_status;
 
+/* ── port of settings/btsets.go BTSets struct ── */
+typedef struct {
+    /* Cache */
+    int64_t cache_size;              /* bytes, default 64MB */
+    int32_t reader_read_ahead;       /* percent 5-100, default 95 */
+    int32_t preload_cache;           /* percent 0-100, default 50 */
+
+    /* Torrent engine */
+    int32_t connections_limit;       /* default 25 */
+    int32_t torrent_disconnect_timeout; /* seconds, default 30 */
+    int32_t force_encrypt;           /* 0=enabled, 1=forced */
+    int32_t disable_tcp;             /* 0=enabled (default), 1=disabled */
+    int32_t disable_utp;             /* 0=enabled (default), 1=disabled */
+    int32_t disable_upload;          /* 0=enabled (default), 1=disabled */
+    int32_t disable_dht;             /* 0=enabled (default), 1=disabled */
+    int32_t disable_upnp;            /* 0=enabled (default), 1=disabled */
+    int32_t enable_ipv6;             /* 0=disabled (default), 1=enabled */
+    int32_t download_rate_limit;     /* KB/s, 0=unlimited */
+    int32_t upload_rate_limit;       /* KB/s, 0=unlimited */
+    int32_t peers_listen_port;       /* 0=random (default) */
+
+    /* Reader */
+    int32_t responsive_mode;         /* 1=enabled (default), 0=disabled */
+} lt_bt_config;
+
 typedef void (*lt_alert_callback)(int alert_type, lt_torrent_id id,
                                   const char* message, void* user_data);
 
@@ -91,6 +116,11 @@ TORRENT_API lt_session_t lt_create_session(const char* listen_interface,
                                            int download_limit,
                                            int upload_limit);
 TORRENT_API void         lt_destroy_session(lt_session_t session);
+
+/* engine config — port of settings/btsets.go + btserver.go configure() */
+TORRENT_API void lt_configure_session(lt_session_t session,
+                                      const lt_bt_config* config);
+TORRENT_API void lt_get_default_config(lt_bt_config* out);
 
 /* alerts */
 TORRENT_API void lt_set_alert_callback(lt_session_t session,
@@ -140,6 +170,16 @@ TORRENT_API int          lt_get_all_stream_statuses(lt_session_t session,
                                                     lt_stream_status* out,
                                                     int max_count);
 
+/* preload — port of torr/preload.go */
+TORRENT_API int  lt_preload_stream(lt_session_t session, lt_stream_id id,
+                                   int64_t preload_bytes);
+
+/* cache settings — port of settings/btsets.go */
+TORRENT_API void lt_set_cache_settings(lt_session_t session, lt_stream_id id,
+                                       int64_t capacity,
+                                       int read_ahead_pct,
+                                       int connections_limit);
+
 /* speed limits */
 TORRENT_API void lt_set_download_limit(lt_session_t session, int bytes_per_sec);
 TORRENT_API void lt_set_upload_limit(lt_session_t session, int bytes_per_sec);
@@ -147,6 +187,7 @@ TORRENT_API void lt_set_upload_limit(lt_session_t session, int bytes_per_sec);
 /* utility */
 TORRENT_API const char* lt_last_error(void);
 TORRENT_API const char* lt_version(void);
+TORRENT_API int         lt_get_active_streams(lt_session_t session);
 
 #ifdef __cplusplus
 }
