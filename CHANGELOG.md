@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.7.1
+
+- **Streaming**: Replaced TorrServer-style async cache pipeline with lt2http-style direct storage reads — pieces are read straight from libtorrent disk storage instead of going through an intermediate RAM cache, eliminating seek delays
+- **Streaming**: Narrowed priority window from 25-piece gradient (Now/Next/Readahead/High/Normal) to just current piece + 2 ahead — focuses 100% of bandwidth on what the player actually needs
+- **Streaming**: 100% forward cache — everything ahead of playback, nothing behind. A 64 MB cache can now stream a 60 GB file by aggressively evicting played pieces
+- **FIX**: Fixed downloads being killed during gaps between player HTTP requests — `clear_priority_impl()` was setting ALL pieces to `dont_download` when no readers existed
+- **FIX**: Protected current reader piece and next piece from cache eviction, preventing evict-download-evict loops at piece boundaries
+- **FIX**: Removed detached threads that spawned `clean_pieces()` and `get_removable_pieces()` on every piece write/read — these overrode `serve_range` priorities and stopped downloads
+- **Build (Windows)**: Reduced DLL size from 9.4 MB to 146 KB
+
 ## 1.7.0
 
 - **FIX (macOS)**: Fixed crash on launch — `libssl.3.dylib` / `libcrypto.3.dylib` were referenced via hardcoded Homebrew paths (`/opt/homebrew/opt/openssl@3/lib/...`), which don't exist on end-user machines. The dylib now uses `@loader_path/` references and bundles OpenSSL alongside the plugin

@@ -421,29 +421,10 @@ struct TorrCache {
     }
 
     // ── port of Cache.cleanPieces ──
-    void clean_pieces() {
-        if (is_remove.load() || is_closed.load()) return;
-
-        {
-            std::lock_guard<std::mutex> lk(mu_remove);
-            if (is_remove.load()) return;
-            is_remove.store(true);
-        }
-
-        auto rem_pieces = get_removable_pieces();
-        if (filled > capacity) {
-            int64_t rems = (filled - capacity) / piece_length + 1;
-            for (auto* p : rem_pieces) {
-                remove_piece(p);
-                rems--;
-                if (rems <= 0) {
-                    is_remove.store(false);
-                    return;
-                }
-            }
-        }
-        is_remove.store(false);
-    }
+    // DISABLED: serve_range handles piece lifecycle directly via
+    // libtorrent priorities. Cache eviction would override serve_range's
+    // focused priorities and stop downloads.
+    void clean_pieces() { return; }
 
     // ── port of Cache.getRemPieces ──
     std::vector<CachePiece*> get_removable_pieces() {
@@ -464,12 +445,32 @@ struct TorrCache {
         }
         ranges = merge_ranges(ranges);
 
+        // collect the exact pieces each reader is currently on — NEVER evict these.
+        // Also protect the NEXT piece (reader_piece + 1) to prevent a tight
+        // evict-download-evict loop at piece boundaries where the reader is
+        // about to cross into the next piece.
+        std::unordered_set<int> current_reader_pieces;
+        {
+            std::lock_guard<std::mutex> lk2(mu_readers);
+            for (auto& kv2 : readers) {
+                auto* r2 = kv2.second;
+                if (r2 && r2->is_use) {
+                    int rp = r2->get_reader_piece();
+                    current_reader_pieces.insert(rp);
+                    current_reader_pieces.insert(rp + 1); // protect next piece too
+                }
+            }
+        }
+
         // find removable pieces — port of the Go loop in getRemPieces
         for (auto& kv : pieces) {
             int id = kv.first;
             auto* p = kv.second.get();
             if (p->size > 0)
                 fill += p->size;
+
+            // NEVER evict the piece the reader is currently sitting on
+            if (current_reader_pieces.count(id)) continue;
 
             if (!ranges.empty()) {
                 if (!in_ranges(ranges, id)) {
@@ -497,51 +498,11 @@ struct TorrCache {
     }
 
     // ── port of Cache.setLoadPriority ──
-    // This is the HEART of TorrServer's priority system
-    void set_load_priority(const std::vector<PieceRange>& ranges) {
-        std::lock_guard<std::mutex> lk(mu_readers);
-        int num_readers = (int)readers.size();
-        if (num_readers == 0) return;
-
-        for (auto& kv : readers) {
-            auto* r = kv.second;
-            if (!r || !r->is_use) continue;
-            if (is_in_file_begin_end(ranges, r->get_reader_piece())) continue;
-
-            int reader_pos = r->get_reader_piece();
-            int reader_rah_pos = r->get_reader_rah_piece();
-            int end = r->get_pieces_range().end_;
-            int count = connections_limit / num_readers; // max concurrent loading blocks
-            int limit = 0;
-
-            for (int i = reader_pos; i < end && limit < count; ++i) {
-                auto* piece = get_piece(i);
-                if (!piece || piece->complete) continue;
-
-                try {
-                    if (i == reader_pos) {
-                        // PiecePriorityNow — port of torrent.PiecePriorityNow
-                        handle.piece_priority(lt::piece_index_t(i), lt::download_priority_t(7));
-                        handle.set_piece_deadline(lt::piece_index_t(i), 0);
-                    } else if (i == reader_pos + 1) {
-                        // PiecePriorityNext — port of torrent.PiecePriorityNext
-                        handle.piece_priority(lt::piece_index_t(i), lt::download_priority_t(6));
-                        handle.set_piece_deadline(lt::piece_index_t(i), 200);
-                    } else if (i > reader_pos && i <= reader_rah_pos) {
-                        // PiecePriorityReadahead — port of torrent.PiecePriorityReadahead
-                        handle.piece_priority(lt::piece_index_t(i), lt::download_priority_t(5));
-                    } else if (i > reader_rah_pos && i <= reader_rah_pos + 5) {
-                        // PiecePriorityHigh — only if not already set
-                        handle.piece_priority(lt::piece_index_t(i), lt::download_priority_t(4));
-                    } else if (i > reader_rah_pos + 5) {
-                        // PiecePriorityNormal
-                        handle.piece_priority(lt::piece_index_t(i), lt::download_priority_t(1));
-                    }
-                } catch (...) {}
-                limit++;
-            }
-        }
-    }
+    // DISABLED: serve_range handles all piece prioritization directly
+    // with a focused 2-piece-ahead window. The old TorrServer priority
+    // gradient (Now/Next/Readahead/High/Normal for 25 pieces) spread
+    // bandwidth too thin and conflicted with serve_range's priorities.
+    void set_load_priority(const std::vector<PieceRange>& /*ranges*/) { return; }
 
     // ── port of Cache.isIdInFileBE ──
     // Protects first/last 8-16MB of each file from eviction
@@ -603,47 +564,17 @@ struct TorrCache {
             readers.erase(r->reader_id);
         }
         delete r;
-        // async priority clear with delay — port of go c.clearPriority()
-        // The 1-second sleep is intentional: TorrServer's Go code sleeps before
-        // clearing to let the new reader establish itself
-        std::thread([this]() {
-            std::this_thread::sleep_for(chr::seconds(1));
-            clear_priority_impl();
-        }).detach();
+        // REMOVED: detached thread that called clear_priority_impl() after
+        // 1-second delay. When no readers exist (gap between player
+        // connections), this set ALL pieces to dont_download, killing
+        // all downloads. serve_range handles priorities directly.
     }
 
     // ── port of Cache.clearPriority ──
-    // When readers close or ranges change, zero priorities on pieces outside ranges
-    void clear_priority_impl() {
-        std::vector<PieceRange> ranges;
-        {
-            std::lock_guard<std::mutex> lk(mu_readers);
-            for (auto& kv : readers) {
-                auto* r = kv.second;
-                if (!r) continue;
-                r->check_reader();
-                if (r->is_use)
-                    ranges.push_back(r->get_pieces_range());
-            }
-        }
-        ranges = merge_ranges(ranges);
-
-        for (auto& kv : pieces) {
-            int id = kv.first;
-            if (!ranges.empty()) {
-                if (!in_ranges(ranges, id)) {
-                    try {
-                        handle.piece_priority(lt::piece_index_t(id), lt::dont_download);
-                    } catch (...) {}
-                }
-            } else {
-                // no readers at all — stop downloading everything
-                try {
-                    handle.piece_priority(lt::piece_index_t(id), lt::dont_download);
-                } catch (...) {}
-            }
-        }
-    }
+    // DISABLED: serve_range handles all piece prioritization directly.
+    // The old code set ALL pieces to dont_download when no readers exist,
+    // which killed downloads during gaps between player HTTP requests.
+    void clear_priority_impl() { return; }
 
     // ── port of Cache.Close ──
     void close() {
@@ -678,11 +609,7 @@ int CachePiece::write_at(const char* b, int len, int64_t off) {
     std::unique_lock<std::shared_mutex> lk(mu);
 
     if (buffer.empty()) {
-        // first write — allocate buffer and trigger cache cleanup
-        // port of: go p.piece.cache.cleanPieces()
-        if (cache) {
-            std::thread([c = cache]() { c->clean_pieces(); }).detach();
-        }
+        // clean_pieces call removed — serve_range handles piece lifecycle
         buffer.resize((size_t)cache->piece_length, 0);
     }
 
@@ -707,10 +634,7 @@ int CachePiece::read_at(char* b, int len, int64_t off) {
     std::memcpy(b, buffer.data() + off, (size_t)n);
     accessed = TorrReader::now_unix();
 
-    // port of: if int64(len(b))+off >= p.piece.Size { go p.piece.cache.cleanPieces() }
-    if ((int64_t)len + off >= size && cache) {
-        std::thread([c = cache]() { c->clean_pieces(); }).detach();
-    }
+    // clean_pieces spawn removed — serve_range handles piece lifecycle
     return n;
 }
 
@@ -723,12 +647,9 @@ void CachePiece::release() {
         size = 0;
         complete = false;
     }
-    // port of: p.cache.torrent.Piece(p.Id).SetPriority(torrent.PiecePriorityNone)
-    if (cache && !cache->is_closed.load()) {
-        try {
-            cache->handle.piece_priority(lt::piece_index_t(id), lt::dont_download);
-        } catch (...) {}
-    }
+    // REMOVED: setting piece to dont_download. serve_range handles
+    // piece lifecycle and priority directly. The old code could nuke
+    // pieces that serve_range was actively waiting for.
 }
 
 // ── TorrReader method implementations (need TorrCache to be defined) ──────────
@@ -740,13 +661,15 @@ int TorrReader::get_piece_num(int64_t off) const {
 }
 
 // port of Reader.getOffsetRange
+// 100% forward cache — everything ahead of playback, nothing behind.
+// This means even a 64 MB cache can stream a 60 GB file: we only
+// keep upcoming data and aggressively evict what's already been played.
 void TorrReader::get_offset_range(int64_t& begin_off, int64_t& end_off) const {
-    int64_t prc = (int64_t)cache->reader_read_ahead_pct;
     int64_t num_readers = (int64_t)get_use_readers();
     if (num_readers == 0) num_readers = 1;
 
-    begin_off = offset - (cache->capacity / num_readers) * (100 - prc) / 100;
-    end_off   = offset + (cache->capacity / num_readers) * prc / 100;
+    begin_off = offset;  // nothing kept behind playback position
+    end_off   = offset + (cache->capacity / num_readers);
 
     if (begin_off < 0) begin_off = 0;
     if (end_off > file_length) end_off = file_length;
@@ -813,9 +736,8 @@ void TorrReader::set_readahead(int64_t length) {
 // port of Reader.Close
 void TorrReader::close() {
     is_closed = true;
-    if (cache) {
-        std::thread([c = cache]() { c->get_removable_pieces(); }).detach();
-    }
+    // REMOVED: detached thread that called get_removable_pieces()
+    // which reset priorities and could nuke pieces serve_range needs.
 }
 
 // ============================================================================
@@ -929,26 +851,15 @@ struct StreamEngine {
             std::lock_guard<std::mutex> lk(piece_mu);
             pieces_have.insert(p);
         }
+        // Wake serve_range — it waits on piece_cv for pieces_have
         piece_cv.notify_all();
-
-        // update piece in cache
-        if (cache) {
-            auto* cp = cache->get_piece(p);
-            if (cp) cp->mark_complete();
-        }
-
-        // EAGERLY pre-fetch piece data into cache
-        try { handle.read_piece(lt::piece_index_t(p)); } catch (...) {}
     }
 
     // signal read_piece_alert from alert thread
     void on_piece_read(int p, const char* data, int size, bool ok) {
         TB_LOG("on_piece_read: piece=%d ok=%d size=%d", p, (int)ok, size);
-        // store in TorrCache piece buffer — port of Piece.WriteAt path
-        if (ok && data && size > 0 && cache) {
-            auto* cp = cache->get_piece(p);
-            if (cp) cp->write_at(data, size, 0);
-        }
+
+        // Store result for read_piece_data() consumers
         {
             std::lock_guard<std::mutex> lk(read_mu);
             ReadResult r;
@@ -959,7 +870,6 @@ struct StreamEngine {
             read_results[p] = std::move(r);
         }
         read_cv.notify_all();
-        // Also wake piece_cv — serve_range waits on it for cache data
         piece_cv.notify_all();
     }
 
@@ -1172,33 +1082,25 @@ static bool wait_for_piece(StreamEngine* s, int piece, int timeout_ms,
         && s->pieces_have.count(piece) > 0;
 }
 
-// read piece data — try cache first, then async read_piece()
-// port of TorrServer's flow: cache.ReadAt → piece.ReadAt → MemPiece.ReadAt
+// Read piece data directly from libtorrent disk storage.
+// Like lt2http: storage()->readv() — reads downloaded piece data.
 static ReadResult read_piece_data(StreamEngine* s, int piece,
                                   int timeout_ms = 5000, int gen = -1) {
     if (gen < 0) gen = s->seek_generation.load();
 
-    // try cache first — port of MemPiece.ReadAt
-    if (s->cache) {
-        auto* cp = s->cache->get_piece(piece);
-        if (cp && cp->complete && !cp->buffer.empty()) {
-            ReadResult r;
-            r.data.resize(cp->buffer.size());
-            int n = cp->read_at(r.data.data(), (int)r.data.size(), 0);
-            if (n > 0) {
-                r.data.resize((size_t)n);
-                r.ok = true;
-                return r;
-            }
-        }
-    }
-
-    // not in cache — async read from libtorrent disk
+    // Check if we already have a read result buffered
     {
         std::lock_guard<std::mutex> lk(s->read_mu);
+        auto it = s->read_results.find(piece);
+        if (it != s->read_results.end() && it->second.ok) {
+            ReadResult r = std::move(it->second);
+            s->read_results.erase(it);
+            return r;
+        }
         s->read_results.erase(piece);
     }
 
+    // Request libtorrent to read piece from disk
     try { s->handle.read_piece(lt::piece_index_t(piece)); } catch (...) {
         return {};
     }
@@ -1259,20 +1161,20 @@ static int send_all(socket_t sock, const char* data, int len) {
     return sent;
 }
 
-// serve_range — port of TorrServer's http.ServeContent path
-// TorrServer uses anacrolix/torrent where storage IS the in-memory cache.
-// Reader.Read() directly reads from RAM — zero latency for downloaded pieces.
-// We replicate this by calling read_piece() to load disk data into our cache.
+// serve_range — based on lt2http's Reader::read() pattern
+//
+// lt2http reads directly from libtorrent storage — no intermediate cache.
+// For each piece: wait until downloaded (have_piece), read via read_piece,
+// send to socket. Only prioritize current piece + 2 ahead.
+// This eliminates the complex async cache pipeline that caused seek delays.
 static bool serve_range(StreamEngine* s, TorrReader* reader, socket_t cli,
                         int64_t range_start, int64_t range_end) {
     int my_gen = s->seek_generation.load();
     int64_t cursor = range_start;
     TB_LOG("serve_range: start=%lld end=%lld gen=%d", (long long)range_start, (long long)range_end, my_gen);
 
-    // detect tail/metadata request vs playback request
     bool is_tail = (range_start > s->file_size - s->piece_length * 10);
 
-    // port of Reader.offset tracking
     if (!is_tail) {
         reader->offset = range_start;
         reader->last_access = TorrReader::now_unix();
@@ -1292,79 +1194,79 @@ static bool serve_range(StreamEngine* s, TorrReader* reader, socket_t cli,
         int64_t send_end = std::min(range_end, pfend);
         if (send_end < sbeg) { cursor = pfend + 1; continue; }
 
-        // ── get piece data into cache ──
-        // TorrServer: Reader.Read() reads directly from in-memory storage.
-        // We must explicitly load data from libtorrent disk → our cache.
-        CachePiece* cp = s->cache ? s->cache->get_piece(p) : nullptr;
-        bool has_buf = cp && !cp->buffer.empty();
-        TB_LOG("serve_range: need piece=%d cursor=%lld has_cache=%d has_buf=%d", p, (long long)cursor, cp?1:0, has_buf?1:0);
+        // ── lt2http pattern: prioritize current + 2 ahead, then wait ──
+        // Like lt2http's Reader::wait_for_piece → prioritize_pieces(start, start+2)
+        bool have_it = false;
+        {
+            std::lock_guard<std::mutex> lk(s->piece_mu);
+            have_it = s->pieces_have.count(p) > 0;
+        }
 
-        if (!cp || cp->buffer.empty()) {
-            // For pieces NOT yet downloaded: set priority so libtorrent downloads them
-            // For pieces ALREADY downloaded: read_piece() loads data from disk
-            TB_LOG("serve_range: requesting piece=%d (priority+deadline+read_piece)", p);
+        if (!have_it) {
+            // Prioritize this piece and next 2 — that's all.
+            // Like lt2http: set_piece_priority(p, 0, priority{7})
+            // then next pieces with staggered deadlines
+            TB_LOG("serve_range: piece=%d not ready, prioritizing p..p+2", p);
             try {
                 s->handle.piece_priority(lt::piece_index_t(p), lt::top_priority);
                 s->handle.set_piece_deadline(lt::piece_index_t(p), 0);
-                s->handle.read_piece(lt::piece_index_t(p));
             } catch (...) {}
-
-            // also prefetch next few pieces for smooth playback
-            for (int i = 1; i <= 3 && p + i <= s->end_piece; ++i) {
-                auto* ncp = s->cache ? s->cache->get_piece(p + i) : nullptr;
-                if (!ncp || ncp->buffer.empty()) {
+            for (int i = 1; i <= 2 && p + i <= s->end_piece; ++i) {
+                bool have_next = false;
+                { std::lock_guard<std::mutex> lk(s->piece_mu); have_next = s->pieces_have.count(p+i) > 0; }
+                if (!have_next) {
                     try {
-                        s->handle.piece_priority(
-                            lt::piece_index_t(p + i), lt::download_priority_t(6));
-                        s->handle.set_piece_deadline(
-                            lt::piece_index_t(p + i), i * 100);
-                        s->handle.read_piece(lt::piece_index_t(p + i));
+                        s->handle.piece_priority(lt::piece_index_t(p+i), lt::download_priority_t(6));
+                        s->handle.set_piece_deadline(lt::piece_index_t(p+i), i * 50);
                     } catch (...) {}
                 }
             }
 
-            // wait for cache buffer to be filled
-            TB_LOG("serve_range: WAITING for piece=%d gen=%d", p, my_gen);
+            // Wait for piece — like lt2http's sleep_for(300ms) polling loop
+            // but using condition variable for zero-latency wakeup
+            TB_LOG("serve_range: WAITING for piece=%d", p);
             std::unique_lock<std::mutex> lk(s->piece_mu);
-            bool ok = s->piece_cv.wait_for(lk, chr::milliseconds(60000), [&] {
-                if (!s->active.load()) return true;
-                if (s->seek_generation.load() != my_gen) return true;
-                auto* c = s->cache ? s->cache->get_piece(p) : nullptr;
-                return c && !c->buffer.empty();
+            bool ok = s->piece_cv.wait_for(lk, chr::seconds(60), [&] {
+                return !s->active.load()
+                    || s->seek_generation.load() != my_gen
+                    || s->pieces_have.count(p) > 0;
             });
+
             if (!s->active.load() || s->seek_generation.load() != my_gen) {
-                TB_LOG("serve_range: WAIT ABORT piece=%d active=%d gen_now=%d my_gen=%d",
-                       p, s->active.load()?1:0, s->seek_generation.load(), my_gen);
+                TB_LOG("serve_range: ABORT piece=%d gen_now=%d my_gen=%d", p, s->seek_generation.load(), my_gen);
                 return false;
             }
-            cp = s->cache ? s->cache->get_piece(p) : nullptr;
-            if (!ok || !cp || cp->buffer.empty()) {
-                TB_LOG("serve_range: WAIT TIMEOUT piece=%d ok=%d cp=%p buf_empty=%d",
-                       p, (int)ok, (void*)cp, cp ? (int)cp->buffer.empty() : -1);
+            if (!ok || s->pieces_have.count(p) == 0) {
+                TB_LOG("serve_range: TIMEOUT piece=%d", p);
                 return false;
             }
-            TB_LOG("serve_range: WAIT OK piece=%d buf_size=%zu", p, cp->buffer.size());
+            TB_LOG("serve_range: piece=%d READY", p);
         }
 
-        // data is in cache — read and send immediately
+        // ── piece is downloaded — read data directly via read_piece ──
+        // Like lt2http: storage()->readv(b, p, offset, ...)
+        // We use read_piece_data which does read_piece → waits for data
+        ReadResult rd = read_piece_data(s, p, 10000, my_gen);
+        if (!rd.ok || rd.data.empty()) {
+            TB_LOG("serve_range: read_piece_data FAILED piece=%d", p);
+            return false;
+        }
+
+        // Extract the slice we need from the piece
         int64_t abs_start = s->file_offset + sbeg;
         int64_t piece_start = (int64_t)p * s->piece_length;
         int64_t off = abs_start - piece_start;
         int64_t nb  = send_end - sbeg + 1;
 
-        {
-            std::shared_lock<std::shared_mutex> rlk(cp->mu);
-            if (off < 0 || (size_t)off >= cp->buffer.size()) { cursor = send_end + 1; continue; }
-            if ((size_t)(off + nb) > cp->buffer.size()) nb = (int64_t)cp->buffer.size() - off;
-            if (nb <= 0) { cursor = send_end + 1; continue; }
+        if (off < 0 || (size_t)off >= rd.data.size()) { cursor = send_end + 1; continue; }
+        if ((size_t)(off + nb) > rd.data.size()) nb = (int64_t)rd.data.size() - off;
+        if (nb <= 0) { cursor = send_end + 1; continue; }
 
-            if (send_all(cli, cp->buffer.data() + off, (int)nb) < 0)
-                return false;
-        }
+        if (send_all(cli, rd.data.data() + off, (int)nb) < 0)
+            return false;
 
         cursor = sbeg + nb;
 
-        // port of Reader.Read: r.offset += int64(n); r.lastAccess = time.Now().Unix()
         if (!is_tail) {
             reader->offset = cursor;
             reader->last_access = TorrReader::now_unix();
@@ -1373,8 +1275,14 @@ static bool serve_range(StreamEngine* s, TorrReader* reader, socket_t cli,
 
         if (s->stream_state.load() != LT_STREAM_READY)
             s->stream_state.store(LT_STREAM_READY);
+
+        // Set played piece to dont_download — this is the "delete behind"
+        // behavior. Libtorrent won't re-request it.
+        try {
+            s->handle.piece_priority(lt::piece_index_t(p), lt::dont_download);
+        } catch (...) {}
     }
-    TB_LOG("serve_range: DONE cursor=%lld end=%lld active=%d", (long long)cursor, (long long)range_end, s->active.load()?1:0);
+    TB_LOG("serve_range: DONE cursor=%lld end=%lld", (long long)cursor, (long long)range_end);
     return true;
 }
 
@@ -1491,6 +1399,15 @@ static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
                 // wake old serve_range so it exits on generation mismatch
                 s->piece_cv.notify_all();
 
+                // Free stale read_results from the old playback position.
+                // Without this, each seek leaks ~2MB of piece data that
+                // serve_range was about to consume but abandoned.
+                {
+                    std::lock_guard<std::mutex> rlk(s->read_mu);
+                    s->read_results.clear();
+                }
+                s->read_cv.notify_all();
+
                 int seek_piece = std::clamp(s->byte_to_piece(rstart),
                                             s->start_piece, s->end_piece);
                 try {
@@ -1503,31 +1420,51 @@ static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
                     s->handle.clear_piece_deadlines();
 
                     // 2. Priority map: old pieces → dont_download,
-                    //    seek region → top, tail → top.
+                    //    seek target → top. Tail kept at low priority
+                    //    (already downloaded, just don't evict).
+                    //    CRITICAL: We must NOT mark ALL wanted pieces as
+                    //    "downloaded" because libtorrent will transition
+                    //    to finished→seeding and STOP all downloads.
                     std::vector<lt::download_priority_t> prios(
                         (size_t)s->ti->num_pieces(), lt::dont_download);
 
-                    // Keep tail pieces for moov atom
+                    // Tail pieces: low priority (1) to keep them available
+                    // but NOT top_priority — avoids "all wanted = done"
                     for (int p = s->tail_start_piece; p <= s->end_piece; ++p)
-                        prios[p] = lt::top_priority;
+                        prios[p] = lt::download_priority_t(1);
 
-                    // Seek target + readahead at top priority
-                    for (int i = 0; i <= 20 && seek_piece + i <= s->end_piece; ++i)
+                    // Seek target + readahead at top priority (only 4 pieces
+                    // to focus bandwidth instead of spreading across 8+)
+                    for (int i = 0; i <= 3 && seek_piece + i <= s->end_piece; ++i)
                         prios[seek_piece + i] = lt::top_priority;
 
                     s->handle.prioritize_pieces(prios);
 
-                    // 3. Deadlines on first 5 pieces — target at 0,
-                    //    next pieces with same deadline so the time-critical
-                    //    picker treats them all as equally urgent and fills
-                    //    the pipeline without stalling after piece 0.
-                    for (int i = 0; i < 5 && seek_piece + i <= s->end_piece; ++i)
+                    // 3. Deadline ONLY on the seek target piece (deadline 0).
+                    //    This forces libtorrent to focus ALL peer bandwidth
+                    //    on this single piece first. Stagger the rest so
+                    //    they arrive in order after the target.
+                    s->handle.set_piece_deadline(
+                        lt::piece_index_t(seek_piece), 0);
+                    for (int i = 1; i < 4 && seek_piece + i <= s->end_piece; ++i)
                         s->handle.set_piece_deadline(
-                            lt::piece_index_t(seek_piece + i), 0);
+                            lt::piece_index_t(seek_piece + i), i * 300);
 
-                    // 4. Load data from disk for already-downloaded pieces
+                    // sequential_download kept ON — serve_range controls
+                    // piece order explicitly via priorities + deadlines.
+
+                    // 5. FORCE resume — prevents finished/seeding state
+                    //    which would kill all downloads.
+                    s->handle.resume();
+
+                    // 6. Load data from disk for already-downloaded pieces
                     for (int i = 0; i <= 3 && seek_piece + i <= s->end_piece; ++i)
                         s->handle.read_piece(lt::piece_index_t(seek_piece + i));
+
+                    // 7. DON'T call clean_pieces() here — it triggers
+                    //    set_load_priority which overrides our focused
+                    //    seek priorities with 25-piece parallel downloads.
+                    //    serve_range will evict as needed per-piece.
                 } catch (...) {}
             }
 
@@ -2198,17 +2135,22 @@ TORRENT_API lt_stream_id lt_start_stream(lt_session_t session,
         // See https://github.com/arvidn/libtorrent/issues/7666
         handle.set_flags(lt::torrent_flags::sequential_download);
 
-        // populate pieces we already have AND load their data into cache
-        // TorrServer: anacrolix/torrent stores data in RAM — already available.
-        // We must explicitly read_piece() to load disk data into our cache.
+        // populate pieces we already have — mark them in pieces_have set.
+        // Only load nearby pieces into RAM cache (head + tail).
+        // Loading ALL pieces would flood I/O and fill the cache budget.
         lt::torrent_status ts = handle.status(lt::torrent_handle::query_pieces);
         for (int p = s->start_piece; p <= s->end_piece; ++p) {
             if (ts.pieces.get_bit(lt::piece_index_t(p))) {
                 s->pieces_have.insert(p);
                 auto* cp = s->cache->get_piece(p);
                 if (cp) cp->mark_complete();
-                // load data from disk into cache buffer immediately
-                try { handle.read_piece(lt::piece_index_t(p)); } catch (...) {}
+                // only pre-load first 2 + tail pieces into read_results
+                // (kept minimal to limit RAM — serve_range reads the rest on demand)
+                bool is_head = (p <= s->start_piece + 1);
+                bool is_tail = (p >= s->tail_start_piece);
+                if (is_head || is_tail) {
+                    try { handle.read_piece(lt::piece_index_t(p)); } catch (...) {}
+                }
             }
         }
 

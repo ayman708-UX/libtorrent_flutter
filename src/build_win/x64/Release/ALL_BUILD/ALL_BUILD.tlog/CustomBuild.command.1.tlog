@@ -1,0 +1,10 @@
+^C:\USERS\AYMAN\DESKTOP\END\FLUTTER_TORRENT\LIBTORRENT_FLUTTER\SRC\CMAKELISTS.TXT
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/Users/Ayman/Desktop/End/flutter_torrent/libtorrent_flutter/src -BC:/Users/Ayman/Desktop/End/flutter_torrent/libtorrent_flutter/src/build_win --check-stamp-file C:/Users/Ayman/Desktop/End/flutter_torrent/libtorrent_flutter/src/build_win/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

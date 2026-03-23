@@ -19,13 +19,10 @@ ios/liblibtorrent_flutter.a
 # Build outputs
 build/
 build-*/
+src/build_win/
 android/.gradle/
 android/build/
 **/*.iml
 
-# Example app heavy platform files (keep lib/ and integration_test/)
-example/android/
-example/windows/
-example/linux/
-example/macos/
-example/ios/
+# Example app (users can find it on the GitHub repo)
+example/
