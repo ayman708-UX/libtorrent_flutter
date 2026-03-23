@@ -24,5 +24,17 @@ android/.gradle/
 android/build/
 **/*.iml
 
-# Example app (users can find it on the GitHub repo)
-example/
+# Example app — only include the Dart source code for pub.dev's Example tab
+example/android/
+example/ios/
+example/linux/
+example/macos/
+example/windows/
+example/build/
+example/.dart_tool/
+example/.idea/
+example/integration_test/
+example/pubspec.lock
+example/*.iml
+example/.flutter-plugins-dependencies
+example/.gitignore

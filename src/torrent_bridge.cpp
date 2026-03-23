@@ -788,6 +788,8 @@ struct StreamEngine {
     // port of TorrServer's multi-reader design
     std::mutex                         clients_mu;
     std::unordered_map<int, std::thread> client_threads;
+    std::unordered_map<int, socket_t>    client_sockets;   // track sockets for forced shutdown
+    std::unordered_set<int>              finished_clients;  // signal thread completion
     std::atomic<int> next_reader_id{1};
 
     // piece availability — signaled by alert thread on piece_finished
@@ -1563,26 +1565,70 @@ static void run_http_server(SessionWrapper* /*sw*/, StreamEngine* stream) {
             // TorrServer does NOT kill old connections; it supports concurrent readers
             int rid = stream->next_reader_id.fetch_add(1);
 
-            // clean up finished threads
+            // register client socket for forced shutdown
             {
                 std::lock_guard<std::mutex> lk(stream->clients_mu);
+                stream->client_sockets[rid] = cli;
+
+                // join and erase finished client threads
                 for (auto it = stream->client_threads.begin(); it != stream->client_threads.end(); ) {
-                    if (it->second.joinable()) {
-                        // try to see if the thread is done (non-blocking)
-                        // We can't truly do this portably, so just manage it
+                    if (stream->finished_clients.count(it->first)) {
+                        if (it->second.joinable()) it->second.join();
+                        stream->finished_clients.erase(it->first);
+                        it = stream->client_threads.erase(it);
+                    } else {
+                        ++it;
                     }
-                    ++it;
                 }
             }
 
             std::thread t([stream, cli, rid]() {
                 handle_connection(stream, cli, rid);
                 CLOSESOCKET(cli);
+                // signal completion so accept loop can join us
+                {
+                    std::lock_guard<std::mutex> lk(stream->clients_mu);
+                    stream->client_sockets.erase(rid);
+                    stream->finished_clients.insert(rid);
+                }
             });
-            t.detach();
+
+            {
+                std::lock_guard<std::mutex> lk(stream->clients_mu);
+                stream->client_threads[rid] = std::move(t);
+            }
         }
 
-        CLOSESOCKET(sock);
+        // Close listen socket if lt_stop_stream hasn't already closed it
+        if (stream->listen_sock != SOCKET_INVALID) {
+            CLOSESOCKET(sock);
+            stream->listen_sock = SOCKET_INVALID;
+        }
+
+        // shut down all client sockets to unblock recv() in client threads
+        {
+            std::lock_guard<std::mutex> lk(stream->clients_mu);
+            for (auto& kv : stream->client_sockets) {
+#ifdef _WIN32
+                ::shutdown(kv.second, SD_BOTH);
+#else
+                ::shutdown(kv.second, SHUT_RDWR);
+#endif
+            }
+        }
+
+        // join all client threads before returning — prevents use-after-free
+        // on StreamEngine's mutexes when the unique_ptr is destroyed
+        std::unordered_map<int, std::thread> threads_to_join;
+        {
+            std::lock_guard<std::mutex> lk(stream->clients_mu);
+            threads_to_join = std::move(stream->client_threads);
+            stream->client_threads.clear();
+            stream->finished_clients.clear();
+        }
+        for (auto& kv : threads_to_join) {
+            if (kv.second.joinable()) kv.second.join();
+        }
     } catch (...) {}
 }
 
@@ -1769,11 +1815,17 @@ TORRENT_API void lt_destroy_session(lt_session_t session) {
         for (auto& kv : sw->streams) {
             kv.second->active = false;
             kv.second->wake_all();
+            // close listen sockets to unblock select() in server threads
+            if (kv.second->listen_sock != SOCKET_INVALID) {
+                CLOSESOCKET(kv.second->listen_sock);
+                kv.second->listen_sock = SOCKET_INVALID;
+            }
         }
     }
     {
         std::lock_guard<std::mutex> lk(sw->streams_mu);
         for (auto& kv : sw->streams) {
+            // server_thread now joins all client threads internally
             if (kv.second->server_thread.joinable())
                 kv.second->server_thread.join();
         }
@@ -2199,10 +2251,17 @@ TORRENT_API void lt_stop_stream(lt_session_t session, lt_stream_id sid) {
     stream->preloading.store(false); // stop preload if running
     stream->wake_all();
 
+    // close listen socket to unblock select() in the server thread
+    if (stream->listen_sock != SOCKET_INVALID) {
+        CLOSESOCKET(stream->listen_sock);
+        stream->listen_sock = SOCKET_INVALID;
+    }
+
     // close TorrCache — port of Cache.Close
     if (stream->cache) stream->cache->close();
 
     if (stream->preload_thread.joinable()) stream->preload_thread.join();
+    // server_thread joins all client threads internally before returning
     if (stream->server_thread.joinable()) stream->server_thread.join();
 
     // clean up ephemeral torrents

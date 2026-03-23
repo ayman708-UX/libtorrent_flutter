@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.2
+
+- **FIX (CRASH)**: Fixed `SIGABRT` crash (`pthread_mutex_destroy called on a destroyed mutex`) when stopping a stream — HTTP client handler threads were detached and continued accessing `StreamEngine` mutexes after the engine was destroyed. Client threads are now tracked, joined, and their sockets force-closed during shutdown
+- **FIX**: Fixed potential double-close of the HTTP listen socket during stream shutdown
+- **FIX**: `lt_destroy_session` now properly closes listen sockets and joins client threads before destroying stream engines
+
 ## 1.7.1
 
 - **Streaming**: Replaced TorrServer-style async cache pipeline with lt2http-style direct storage reads — pieces are read straight from libtorrent disk storage instead of going through an intermediate RAM cache, eliminating seek delays
