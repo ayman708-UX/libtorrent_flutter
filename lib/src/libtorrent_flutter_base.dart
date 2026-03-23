@@ -326,6 +326,27 @@ class LibtorrentFlutter {
   bool isStreaming(int torrentId) =>
       _streams.values.any((s) => s.torrentId == torrentId && s.isActive);
 
+  /// Preload head + tail of the stream file for fast playback start.
+  /// Port of TorrServer's torr/preload.go Preload() function.
+  /// [preloadBytes] = 0 defaults to 16MB (head + tail).
+  bool preloadStream(int streamId, {int preloadBytes = 0}) {
+    return _b.preloadStream(_session, streamId, preloadBytes) != 0;
+  }
+
+  /// Configure the TorrServer-style cache for an active stream.
+  /// Port of TorrServer's settings/btsets.go BTSets fields.
+  ///
+  /// - [capacity] — cache size in bytes (default 64MB).
+  /// - [readAheadPct] — percentage 5-100 of cache used for read-ahead (default 95%).
+  /// - [connectionsLimit] — max concurrent piece requests per reader (default 25).
+  void setCacheSettings(int streamId, {
+    int capacity = 0,
+    int readAheadPct = 0,
+    int connectionsLimit = 0,
+  }) {
+    _b.setCacheSettings(_session, streamId, capacity, readAheadPct, connectionsLimit);
+  }
+
   // ─── Speed Limits ─────────────────────────────────────────────────────────
 
   /// Set download speed limit in bytes/sec (0 = unlimited).
@@ -333,6 +354,72 @@ class LibtorrentFlutter {
 
   /// Set upload speed limit in bytes/sec (0 = unlimited).
   void setUploadLimit(int bps) => _b.setUploadLimit(_session, bps);
+
+  // ─── Engine Configuration — port of settings/btsets.go + btserver.go ───────
+
+  /// Apply TorrServer-style engine configuration.
+  ///
+  /// Port of btserver.go configure(). Maps [BtConfig] fields to libtorrent
+  /// settings_pack values: encryption, DHT, UPnP, rate limits, etc.
+  /// Also applies cache/reader settings to all future streams.
+  void configureSession(BtConfig config) {
+    final cfgPtr = calloc<LtBtConfig>();
+    try {
+      cfgPtr.ref.cacheSize = config.cacheSize;
+      cfgPtr.ref.readerReadAhead = config.readerReadAhead;
+      cfgPtr.ref.preloadCache = config.preloadCache;
+      cfgPtr.ref.connectionsLimit = config.connectionsLimit;
+      cfgPtr.ref.torrentDisconnectTimeout = config.torrentDisconnectTimeout;
+      cfgPtr.ref.forceEncrypt = config.forceEncrypt ? 1 : 0;
+      cfgPtr.ref.disableTcp = config.disableTcp ? 1 : 0;
+      cfgPtr.ref.disableUtp = config.disableUtp ? 1 : 0;
+      cfgPtr.ref.disableUpload = config.disableUpload ? 1 : 0;
+      cfgPtr.ref.disableDht = config.disableDht ? 1 : 0;
+      cfgPtr.ref.disableUpnp = config.disableUpnp ? 1 : 0;
+      cfgPtr.ref.enableIpv6 = config.enableIpv6 ? 1 : 0;
+      cfgPtr.ref.downloadRateLimit = config.downloadRateLimit;
+      cfgPtr.ref.uploadRateLimit = config.uploadRateLimit;
+      cfgPtr.ref.peersListenPort = config.peersListenPort;
+      cfgPtr.ref.responsiveMode = config.responsiveMode ? 1 : 0;
+      _b.configureSession(_session, cfgPtr);
+    } finally {
+      calloc.free(cfgPtr);
+    }
+  }
+
+  /// Get TorrServer's default engine configuration.
+  ///
+  /// Port of settings.SetDefaultConfig(). Returns a [BtConfig] with the
+  /// same defaults TorrServer uses out of the box.
+  BtConfig getDefaultConfig() {
+    final cfgPtr = calloc<LtBtConfig>();
+    try {
+      _b.getDefaultConfig(cfgPtr);
+      return BtConfig(
+        cacheSize: cfgPtr.ref.cacheSize,
+        readerReadAhead: cfgPtr.ref.readerReadAhead,
+        preloadCache: cfgPtr.ref.preloadCache,
+        connectionsLimit: cfgPtr.ref.connectionsLimit,
+        torrentDisconnectTimeout: cfgPtr.ref.torrentDisconnectTimeout,
+        forceEncrypt: cfgPtr.ref.forceEncrypt != 0,
+        disableTcp: cfgPtr.ref.disableTcp != 0,
+        disableUtp: cfgPtr.ref.disableUtp != 0,
+        disableUpload: cfgPtr.ref.disableUpload != 0,
+        disableDht: cfgPtr.ref.disableDht != 0,
+        disableUpnp: cfgPtr.ref.disableUpnp != 0,
+        enableIpv6: cfgPtr.ref.enableIpv6 != 0,
+        downloadRateLimit: cfgPtr.ref.downloadRateLimit,
+        uploadRateLimit: cfgPtr.ref.uploadRateLimit,
+        peersListenPort: cfgPtr.ref.peersListenPort,
+        responsiveMode: cfgPtr.ref.responsiveMode != 0,
+      );
+    } finally {
+      calloc.free(cfgPtr);
+    }
+  }
+
+  /// Number of active streams across all torrents.
+  int get activeStreamCount => _b.getActiveStreams(_session);
 
   // ─── Polling ──────────────────────────────────────────────────────────────
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.0
+
+- **FIX (macOS)**: Fixed crash on launch — `libssl.3.dylib` / `libcrypto.3.dylib` were referenced via hardcoded Homebrew paths (`/opt/homebrew/opt/openssl@3/lib/...`), which don't exist on end-user machines. The dylib now uses `@loader_path/` references and bundles OpenSSL alongside the plugin
+- **Build (macOS)**: Added `install_name_tool` POST_BUILD step in CMakeLists.txt to automatically rewrite OpenSSL load paths during compilation
+- **Build (macOS)**: Added `build_macos.sh` — one-command script that builds the dylib, copies OpenSSL from Homebrew, fixes all dylib cross-references, and places files in `macos/` and `prebuilt/macos/universal/`
+- **Packaging (macOS)**: Updated podspec to vendor `libssl.3.dylib` and `libcrypto.3.dylib` alongside the main plugin dylib
+- **Streaming**: Improved seek performance — 5 deadline pieces at deadline=0, unlimited unchoke slots, optimized `cancel_non_critical()` timing
+- **Engine**: `unchoke_slots_limit` changed from 4 to unlimited (-1) — fixes issue where only 4 peers would upload despite hundreds connected
+
 ## 1.6.9
 
 - **Engine**: Complete rewrite of the C++ streaming engine — new priority system, HTTP server, and piece management

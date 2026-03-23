@@ -117,10 +117,19 @@ elseif(APPLE)
         endforeach()
     endif()
 
-    # OpenSSL headers (keg-only on Homebrew)
+    # OpenSSL — prefer static libs to avoid Homebrew runtime dependency
+    set(OPENSSL_USE_STATIC_LIBS TRUE)
+    list(APPEND CMAKE_PREFIX_PATH
+        "/opt/homebrew/opt/openssl@3"
+        "/opt/homebrew/opt/openssl"
+        "/usr/local/opt/openssl@3"
+        "/usr/local/opt/openssl"
+    )
     find_package(OpenSSL QUIET)
     if(OpenSSL_FOUND)
         target_include_directories(libtorrent_flutter PRIVATE ${OPENSSL_INCLUDE_DIR})
+        target_link_libraries(libtorrent_flutter PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+        message(STATUS "OpenSSL: ${OPENSSL_SSL_LIBRARY} (static=${OPENSSL_USE_STATIC_LIBS})")
     else()
         foreach(_dir "/opt/homebrew/opt/openssl/include" "/usr/local/opt/openssl/include")
             if(EXISTS "${_dir}/openssl/opensslv.h")
@@ -135,6 +144,31 @@ else()
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(LIBTORRENT REQUIRED IMPORTED_TARGET libtorrent-rasterbar)
     target_link_libraries(libtorrent_flutter PRIVATE PkgConfig::LIBTORRENT)
+endif()
+
+# ── macOS: fix OpenSSL dylib paths for redistribution ──────────────────────────
+if(APPLE)
+    add_custom_command(TARGET libtorrent_flutter POST_BUILD
+        # ARM Homebrew paths
+        COMMAND install_name_tool -change
+            "/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib"
+            "@loader_path/libssl.3.dylib"
+            $<TARGET_FILE:libtorrent_flutter> || true
+        COMMAND install_name_tool -change
+            "/opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib"
+            "@loader_path/libcrypto.3.dylib"
+            $<TARGET_FILE:libtorrent_flutter> || true
+        # Intel Homebrew paths
+        COMMAND install_name_tool -change
+            "/usr/local/opt/openssl@3/lib/libssl.3.dylib"
+            "@loader_path/libssl.3.dylib"
+            $<TARGET_FILE:libtorrent_flutter> || true
+        COMMAND install_name_tool -change
+            "/usr/local/opt/openssl@3/lib/libcrypto.3.dylib"
+            "@loader_path/libcrypto.3.dylib"
+            $<TARGET_FILE:libtorrent_flutter> || true
+        COMMENT "Rewriting OpenSSL load paths to @loader_path for redistribution"
+    )
 endif()
 
 # ── Visibility ─────────────────────────────────────────────────────────────────

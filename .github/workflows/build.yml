@@ -113,7 +113,7 @@ jobs:
           find . -name "*.a" | head -5
         timeout-minutes: 15
 
-      - name: Build torrent_bridge (static linked)
+      - name: Build torrent_bridge (fully static linked)
         run: |
           LT_LIB=$(find libtorrent-src/build -name "libtorrent-rasterbar.a" | head -1)
           BOOST_INC=$(brew --prefix boost)/include
@@ -130,9 +130,18 @@ jobs:
             -o build-macos/liblibtorrent_flutter.dylib \
             src/torrent_bridge.cpp \
             -Wl,-force_load,"$LT_LIB" \
-            -L${OPENSSL_LIB} -lssl -lcrypto \
+            ${OPENSSL_LIB}/libssl.a ${OPENSSL_LIB}/libcrypto.a \
             -framework CoreFoundation -framework SystemConfiguration \
             -install_name @rpath/liblibtorrent_flutter.dylib
+
+          # Verify no Homebrew dynamic dependencies leak through
+          echo "=== Dynamic dependencies ==="
+          otool -L build-macos/liblibtorrent_flutter.dylib
+          if otool -L build-macos/liblibtorrent_flutter.dylib | grep -q /opt/homebrew; then
+            echo "❌ ERROR: dylib still references Homebrew paths!"
+            exit 1
+          fi
+          echo "✅ No Homebrew references — dylib is self-contained"
 
           ls -la build-macos/liblibtorrent_flutter.dylib
           echo "✅ macOS static build succeeded"

@@ -161,6 +161,50 @@ typedef _GetAllStreamStatusesN = Int32 Function(
 typedef LtGetAllStreamStatuses = int Function(
     Pointer<LtSessionOpaque>, Pointer<LtStreamStatus>, int);
 
+// ─── Preload — port of torr/preload.go ────────────────────────────────────────
+typedef _PreloadStreamN = Int32 Function(
+    Pointer<LtSessionOpaque>, Int64, Int64);
+typedef LtPreloadStream = int Function(
+    Pointer<LtSessionOpaque>, int, int);
+
+// ─── Cache settings — port of settings/btsets.go ─────────────────────────────
+typedef _SetCacheSettingsN = Void Function(
+    Pointer<LtSessionOpaque>, Int64, Int64, Int32, Int32);
+typedef LtSetCacheSettings = void Function(
+    Pointer<LtSessionOpaque>, int, int, int, int);
+
+// ─── lt_bt_config — port of settings/btsets.go BTSets ────────────────────────
+final class LtBtConfig extends Struct {
+  @Int64()  external int cacheSize;
+  @Int32()  external int readerReadAhead;
+  @Int32()  external int preloadCache;
+  @Int32()  external int connectionsLimit;
+  @Int32()  external int torrentDisconnectTimeout;
+  @Int32()  external int forceEncrypt;
+  @Int32()  external int disableTcp;
+  @Int32()  external int disableUtp;
+  @Int32()  external int disableUpload;
+  @Int32()  external int disableDht;
+  @Int32()  external int disableUpnp;
+  @Int32()  external int enableIpv6;
+  @Int32()  external int downloadRateLimit;
+  @Int32()  external int uploadRateLimit;
+  @Int32()  external int peersListenPort;
+  @Int32()  external int responsiveMode;
+}
+
+// ─── Engine config — port of btserver.go configure() ─────────────────────────
+typedef _ConfigureSessionN = Void Function(
+    Pointer<LtSessionOpaque>, Pointer<LtBtConfig>);
+typedef LtConfigureSession = void Function(
+    Pointer<LtSessionOpaque>, Pointer<LtBtConfig>);
+
+typedef _GetDefaultConfigN = Void Function(Pointer<LtBtConfig>);
+typedef LtGetDefaultConfig = void Function(Pointer<LtBtConfig>);
+
+typedef _GetActiveStreamsN = Int32 Function(Pointer<LtSessionOpaque>);
+typedef LtGetActiveStreams = int Function(Pointer<LtSessionOpaque>);
+
 // ─── Settings ────────────────────────────────────────────────────────────────
 typedef _SetDownloadLimitN = Void Function(Pointer<LtSessionOpaque>, Int32);
 typedef LtSetDownloadLimit = void Function(Pointer<LtSessionOpaque>, int);
@@ -231,6 +275,11 @@ class TorrentBridgeBindings {
   late final LtGetAllStreamStatuses getAllStreamStatuses;
   late final LtSetDownloadLimit   setDownloadLimit;
   late final LtSetUploadLimit     setUploadLimit;
+  late final LtPreloadStream      preloadStream;
+  late final LtSetCacheSettings   setCacheSettings;
+  late final LtConfigureSession   configureSession;
+  late final LtGetDefaultConfig   getDefaultConfig;
+  late final LtGetActiveStreams   getActiveStreams;
   late final LtLastError          lastError;
   late final LtVersion            version;
 
@@ -257,6 +306,11 @@ class TorrentBridgeBindings {
     getAllStreamStatuses = _lib.lookup<NativeFunction<_GetAllStreamStatusesN>>('lt_get_all_stream_statuses').asFunction<LtGetAllStreamStatuses>();
     setDownloadLimit    = _lib.lookup<NativeFunction<_SetDownloadLimitN>>('lt_set_download_limit').asFunction<LtSetDownloadLimit>();
     setUploadLimit      = _lib.lookup<NativeFunction<_SetUploadLimitN>>('lt_set_upload_limit').asFunction<LtSetUploadLimit>();
+    preloadStream       = _lib.lookup<NativeFunction<_PreloadStreamN>>('lt_preload_stream').asFunction<LtPreloadStream>();
+    setCacheSettings    = _lib.lookup<NativeFunction<_SetCacheSettingsN>>('lt_set_cache_settings').asFunction<LtSetCacheSettings>();
+    configureSession    = _lib.lookup<NativeFunction<_ConfigureSessionN>>('lt_configure_session').asFunction<LtConfigureSession>();
+    getDefaultConfig    = _lib.lookup<NativeFunction<_GetDefaultConfigN>>('lt_get_default_config').asFunction<LtGetDefaultConfig>();
+    getActiveStreams     = _lib.lookup<NativeFunction<_GetActiveStreamsN>>('lt_get_active_streams').asFunction<LtGetActiveStreams>();
     lastError           = _lib.lookup<NativeFunction<_LastErrorN>>('lt_last_error').asFunction<LtLastError>();
     version             = _lib.lookup<NativeFunction<_VersionN>>('lt_version').asFunction<LtVersion>();
   }

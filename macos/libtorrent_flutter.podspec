@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'libtorrent_flutter'
-  s.version          = '1.6.8'
+  s.version          = '1.7.0'
   s.summary          = 'Flutter plugin for libtorrent with built-in streaming server.'
   s.description      = <<-DESC
   Native libtorrent 2.0 bindings for Flutter with an integrated HTTP streaming server.
@@ -20,8 +20,9 @@ Pod::Spec.new do |s|
   prebuilt_absolute = File.join(__dir__, prebuilt_library)
 
   if File.exist?(prebuilt_absolute)
-    # Use prebuilt — just bundle the dylib, no compilation needed
-    s.vendored_libraries = prebuilt_library
+    # Use prebuilt — bundle the dylib plus OpenSSL dependencies
+    openssl_dylibs = Dir.glob(File.join(__dir__, 'lib*.dylib')).map { |f| File.basename(f) }
+    s.vendored_libraries = openssl_dylibs
     s.source_files = 'Classes/**/*.swift'
   else
     # Build from source — needs Homebrew libtorrent
