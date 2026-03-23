@@ -4,6 +4,9 @@
 
 - **FIX (CRASH)**: Fixed `SIGABRT` crash on stream shutdown — `cache->close()` destroyed `TorrReader` objects and their mutexes while HTTP client threads were still using them. Reordered shutdown to join all threads before closing the cache
 - **FIX**: Added guard in `close_reader()` to skip cleanup if the cache is already closed, preventing double-free of reader mutexes
+- **FIX**: `read_piece_data()` now checks `active` flag in its wait predicate — threads wake immediately on shutdown instead of blocking for up to 10 seconds
+- **FIX**: `lt_destroy_session` no longer holds `streams_mu` while joining threads, preventing deadlock with the alert thread
+- **HARDENING**: All thread entry points (`handle_connection`, client thread lambda), shutdown paths (`lt_stop_stream`, `lt_destroy_session`), and cache cleanup (`close_reader`, `TorrCache::close`) wrapped in try-catch — the native library will never crash the app, even on unexpected shutdown races
 
 ## 1.7.2
 

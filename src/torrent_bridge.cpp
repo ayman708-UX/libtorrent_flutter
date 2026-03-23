@@ -558,13 +558,18 @@ struct TorrCache {
 
     // ── port of Cache.CloseReader ──
     void close_reader(TorrReader* r) {
+        if (!r) return;
         if (is_closed.load()) return;  // cache already closed, reader already freed
-        {
-            std::lock_guard<std::mutex> lk(mu_readers);
-            r->close();
-            readers.erase(r->reader_id);
+        try {
+            {
+                std::lock_guard<std::mutex> lk(mu_readers);
+                r->close();
+                readers.erase(r->reader_id);
+            }
+            delete r;
+        } catch (...) {
+            // Never crash on reader cleanup — reader may already be freed
         }
-        delete r;
         // REMOVED: detached thread that called clear_priority_impl() after
         // 1-second delay. When no readers exist (gap between player
         // connections), this set ALL pieces to dont_download, killing
@@ -579,12 +584,18 @@ struct TorrCache {
 
     // ── port of Cache.Close ──
     void close() {
+        if (is_closed.load()) return;  // already closed
         is_closed.store(true);
-        std::lock_guard<std::mutex> lk(mu_readers);
-        for (auto& kv : readers)
-            delete kv.second;
-        readers.clear();
-        pieces.clear();
+        try {
+            std::lock_guard<std::mutex> lk(mu_readers);
+            for (auto& kv : readers) {
+                try { delete kv.second; } catch (...) {}
+            }
+            readers.clear();
+            pieces.clear();
+        } catch (...) {
+            // Never crash during cache teardown
+        }
     }
 
     // ── port of Cache.GetCapacity ──
@@ -1110,7 +1121,8 @@ static ReadResult read_piece_data(StreamEngine* s, int piece,
 
     std::unique_lock<std::mutex> lk(s->read_mu);
     if (s->read_cv.wait_for(lk, chr::milliseconds(timeout_ms),
-            [&]{ return s->read_results.count(piece) > 0
+            [&]{ return !s->active.load()
+                     || s->read_results.count(piece) > 0
                      || s->seek_generation.load() != gen; })) {
         auto it = s->read_results.find(piece);
         if (it != s->read_results.end()) {
@@ -1295,6 +1307,9 @@ static bool serve_range(StreamEngine* s, TorrReader* reader, socket_t cli,
 static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
     // port of stream.go: atomic.AddInt32(&activeStreams, 1)
     StreamEngine::active_streams.fetch_add(1);
+
+    TorrReader* reader = nullptr;
+    try {
 
     // Create reader for this connection — port of t.NewReader(file)
     TorrReader* reader = s->cache->new_reader(
@@ -1519,10 +1534,17 @@ static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
 
 cleanup:
     // port of stream.go: defer t.CloseReader(reader)
-    s->cache->close_reader(reader);
+    try {
+        if (s->cache && reader) s->cache->close_reader(reader);
+    } catch (...) {}
 
     // port of stream.go: defer atomic.AddInt32(&activeStreams, -1)
     StreamEngine::active_streams.fetch_add(-1);
+
+    } catch (...) {
+        // Never crash in client handler — just clean up
+        StreamEngine::active_streams.fetch_add(-1);
+    }
 }
 
 // run_http_server — accepts connections, each gets its own TorrReader
@@ -1584,14 +1606,16 @@ static void run_http_server(SessionWrapper* /*sw*/, StreamEngine* stream) {
             }
 
             std::thread t([stream, cli, rid]() {
-                handle_connection(stream, cli, rid);
-                CLOSESOCKET(cli);
+                try {
+                    handle_connection(stream, cli, rid);
+                } catch (...) {}
+                try { CLOSESOCKET(cli); } catch (...) {}
                 // signal completion so accept loop can join us
-                {
+                try {
                     std::lock_guard<std::mutex> lk(stream->clients_mu);
                     stream->client_sockets.erase(rid);
                     stream->finished_clients.insert(rid);
-                }
+                } catch (...) {}
             });
 
             {
@@ -1810,41 +1834,51 @@ TORRENT_API void lt_destroy_session(lt_session_t session) {
     if (!session) return;
     auto* sw = to_sw(session);
 
-    // stop all streams
-    {
-        std::lock_guard<std::mutex> lk(sw->streams_mu);
-        for (auto& kv : sw->streams) {
-            kv.second->active = false;
-            kv.second->wake_all();
-            // close listen sockets to unblock select() in server threads
-            if (kv.second->listen_sock != SOCKET_INVALID) {
-                CLOSESOCKET(kv.second->listen_sock);
-                kv.second->listen_sock = SOCKET_INVALID;
+    try {
+        // stop all streams — move them out so we don't hold streams_mu while
+        // joining threads (alert thread also locks streams_mu to deliver pieces,
+        // holding it during join would deadlock)
+        std::vector<std::unique_ptr<StreamEngine>> streams_to_destroy;
+        {
+            std::lock_guard<std::mutex> lk(sw->streams_mu);
+            for (auto& kv : sw->streams) {
+                try {
+                    kv.second->active = false;
+                    kv.second->preloading.store(false);
+                    kv.second->wake_all();
+                    if (kv.second->listen_sock != SOCKET_INVALID) {
+                        CLOSESOCKET(kv.second->listen_sock);
+                        kv.second->listen_sock = SOCKET_INVALID;
+                    }
+                } catch (...) {}
+                streams_to_destroy.push_back(std::move(kv.second));
             }
+            sw->streams.clear();
         }
-    }
-    {
-        std::lock_guard<std::mutex> lk(sw->streams_mu);
-        for (auto& kv : sw->streams) {
-            // server_thread now joins all client threads internally
-            if (kv.second->server_thread.joinable())
-                kv.second->server_thread.join();
+        // join all threads WITHOUT holding streams_mu
+        for (auto& stream : streams_to_destroy) {
+            try { if (stream->preload_thread.joinable()) stream->preload_thread.join(); } catch (...) {}
+            try { if (stream->server_thread.joinable()) stream->server_thread.join(); } catch (...) {}
+            try { if (stream->cache) stream->cache->close(); } catch (...) {}
         }
-        sw->streams.clear();
-    }
+        streams_to_destroy.clear();
+    } catch (...) {}
 
-    sw->alert_running = false;
-    if (sw->alert_thread.joinable()) sw->alert_thread.join();
+    try {
+        sw->alert_running = false;
+        if (sw->alert_thread.joinable()) sw->alert_thread.join();
+    } catch (...) {}
 
     // flush resume data
-    {
+    try {
         std::lock_guard<std::mutex> lk(sw->mu);
         for (auto& kv : sw->handles)
             if (kv.second.is_valid())
                 try { kv.second.save_resume_data(lt::torrent_handle::flush_disk_cache); } catch (...) {}
-    }
+    } catch (...) {}
+
     std::this_thread::sleep_for(chr::milliseconds(200));
-    delete sw;
+    try { delete sw; } catch (...) {}
 }
 
 TORRENT_API void lt_set_alert_callback(lt_session_t session,
@@ -2247,6 +2281,8 @@ TORRENT_API void lt_stop_stream(lt_session_t session, lt_stream_id sid) {
         sw->streams.erase(it);
     }
 
+    try {
+
     lt_torrent_id tid = stream->torrent_id;
     stream->active = false;
     stream->preloading.store(false); // stop preload if running
@@ -2290,6 +2326,11 @@ TORRENT_API void lt_stop_stream(lt_session_t session, lt_stream_id sid) {
                 stream->handle.prioritize_files(p);
             }
         } catch (...) {}
+    }
+
+    } catch (...) {
+        // Never crash during stream shutdown — stream unique_ptr will
+        // still be destroyed when it goes out of scope
     }
 }
 
