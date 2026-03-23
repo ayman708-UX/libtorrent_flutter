@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.3
+
+- **FIX (CRASH)**: Fixed `SIGABRT` crash on stream shutdown — `cache->close()` destroyed `TorrReader` objects and their mutexes while HTTP client threads were still using them. Reordered shutdown to join all threads before closing the cache
+- **FIX**: Added guard in `close_reader()` to skip cleanup if the cache is already closed, preventing double-free of reader mutexes
+
 ## 1.7.2
 
 - **FIX (CRASH)**: Fixed `SIGABRT` crash (`pthread_mutex_destroy called on a destroyed mutex`) when stopping a stream — HTTP client handler threads were detached and continued accessing `StreamEngine` mutexes after the engine was destroyed. Client threads are now tracked, joined, and their sockets force-closed during shutdown

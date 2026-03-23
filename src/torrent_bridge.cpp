@@ -558,6 +558,7 @@ struct TorrCache {
 
     // ── port of Cache.CloseReader ──
     void close_reader(TorrReader* r) {
+        if (is_closed.load()) return;  // cache already closed, reader already freed
         {
             std::lock_guard<std::mutex> lk(mu_readers);
             r->close();
@@ -2257,12 +2258,15 @@ TORRENT_API void lt_stop_stream(lt_session_t session, lt_stream_id sid) {
         stream->listen_sock = SOCKET_INVALID;
     }
 
-    // close TorrCache — port of Cache.Close
-    if (stream->cache) stream->cache->close();
-
     if (stream->preload_thread.joinable()) stream->preload_thread.join();
     // server_thread joins all client threads internally before returning
+    // MUST complete before cache->close() — client threads use TorrReader
+    // objects owned by the cache. Closing cache first causes double-free
+    // of TorrReader mutexes (SIGABRT: pthread_mutex_destroy on destroyed mutex).
     if (stream->server_thread.joinable()) stream->server_thread.join();
+
+    // close TorrCache AFTER all threads are done — port of Cache.Close
+    if (stream->cache) stream->cache->close();
 
     // clean up ephemeral torrents
     bool ephemeral = false;
