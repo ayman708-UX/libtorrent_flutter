@@ -4,7 +4,7 @@ The only Flutter package wrapping **libtorrent 2.0** — the same C++ engine pow
 
 ```yaml
 dependencies:
-  libtorrent_flutter: ^1.7.3
+  libtorrent_flutter: ^1.7.4
 ```
 
 ---
@@ -198,13 +198,12 @@ FlutterForegroundTask.startService(
 A single C++ file (`torrent_bridge.cpp`) wraps libtorrent 2.0 and compiles to a native static/shared library on every platform. Dart talks to it via FFI — no platform channels, no Kotlin, no Swift.
 
 When you call `startStream()`:
-1. The engine sets piece deadlines on the first 6 pieces — piece 0 gets `set_piece_deadline(0)` triggering libtorrent's time-critical mode, which requests it from multiple peers simultaneously and cancels slow ones
-2. A tiny HTTP server starts on `127.0.0.1` on a random free port, running its own accept thread
-3. The server responds to byte-range requests, blocking via condition variables until each piece arrives — zero CPU polling
-4. When the player needs container metadata (moov atom, cues) from the end of the file, it sends a range request — the engine fetches those pieces on-demand with head/tail protection priorities
-5. A 5-level priority gradient (NOW=7, NEXT=6, READAHEAD=5, BACK=1, SKIP=0) keeps bandwidth focused on the playback window while maintaining a backward buffer for quick rewinds
-6. A configurable RAM piece cache serves repeated reads instantly, with safe-zone protection around the playhead and LRU eviction for distant pieces
-7. On seek, old piece deadlines are cleared immediately, new deadlines are set at the seek target with 200ms spacing, and the HTTP connection is preempted so the player's new request is accepted within milliseconds
+1. The engine estimates media bitrate from file size and computes an adaptive startup piece count (1–5 pieces instead of a fixed number) — large files start faster because fewer pieces need to arrive before the player can begin
+2. Critical startup pieces get `set_piece_deadline(0)` triggering libtorrent's time-critical mode, which requests them from multiple peers simultaneously and cancels slow ones. Tail pieces (moov atom) download at lower priority so they never steal bandwidth from the first frame
+3. A tiny HTTP server starts on `127.0.0.1` on a random free port, running its own accept thread
+4. The server responds to byte-range requests, blocking via condition variables until each piece arrives — zero CPU polling. A hot piece cache serves repeated reads instantly without hitting disk
+5. Only the current playback piece + 2 ahead are prioritized — 100% of bandwidth goes to what the player needs right now. Played pieces stay in a trailing retention window (3 pieces) for quick rewinds and player re-reads
+6. On seek, old piece deadlines are cleared immediately, trailing pieces are dropped, and new deadlines are set at the seek target with tight spacing — all bandwidth redirects to the seek position within milliseconds
 
 The stream URL works with any player that handles HTTP range requests.
 

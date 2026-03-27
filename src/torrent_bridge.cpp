@@ -824,6 +824,15 @@ struct StreamEngine {
     std::atomic<double> download_speed{0};
     std::atomic<double> upload_speed{0};
 
+    // trailing retention — keep last N played pieces for re-reads/rewinds
+    static constexpr int TRAILING_WINDOW = 3;
+    std::deque<int>  trailing_pieces;
+    std::mutex       trailing_mu;
+
+    // adaptive bitrate estimate (bytes/sec) — derived from file size
+    float estimated_bitrate_bps = 625000.0f;
+    int   critical_startup_pieces = 2;  // computed at init
+
     std::atomic<bool> active{true};
 
     int byte_to_piece(int64_t off) const {
@@ -883,6 +892,22 @@ struct StreamEngine {
             }
             read_results[p] = std::move(r);
         }
+
+        // Populate hot piece cache — instant re-reads for player probes,
+        // overlapping range requests, and small backward seeks
+        if (ok && data && size > 0 && cache) {
+            auto* cp = cache->get_piece(p);
+            if (cp) {
+                std::unique_lock<std::shared_mutex> lk(cp->mu);
+                if (cp->buffer.empty()) {
+                    cp->buffer.assign(data, data + size);
+                    cp->size = (int64_t)size;
+                    cp->complete = true;
+                    cp->accessed = TorrReader::now_unix();
+                }
+            }
+        }
+
         read_cv.notify_all();
         piece_cv.notify_all();
     }
@@ -1102,6 +1127,20 @@ static ReadResult read_piece_data(StreamEngine* s, int piece,
                                   int timeout_ms = 5000, int gen = -1) {
     if (gen < 0) gen = s->seek_generation.load();
 
+    // Check hot piece cache first — instant for re-reads
+    if (s->cache) {
+        auto* cp = s->cache->get_piece(piece);
+        if (cp) {
+            std::shared_lock<std::shared_mutex> lk(cp->mu);
+            if (!cp->buffer.empty() && cp->complete) {
+                ReadResult r;
+                r.data.assign(cp->buffer.begin(), cp->buffer.end());
+                r.ok = true;
+                return r;
+            }
+        }
+    }
+
     // Check if we already have a read result buffered
     {
         std::lock_guard<std::mutex> lk(s->read_mu);
@@ -1291,11 +1330,32 @@ static bool serve_range(StreamEngine* s, TorrReader* reader, socket_t cli,
         if (s->stream_state.load() != LT_STREAM_READY)
             s->stream_state.store(LT_STREAM_READY);
 
-        // Set played piece to dont_download — this is the "delete behind"
-        // behavior. Libtorrent won't re-request it.
-        try {
-            s->handle.piece_priority(lt::piece_index_t(p), lt::dont_download);
-        } catch (...) {}
+        // Trailing retention — keep last N played pieces for re-reads.
+        // Only drop pieces that fall off the trailing window.
+        {
+            std::lock_guard<std::mutex> tlk(s->trailing_mu);
+            // avoid duplicates (piece already in trailing window)
+            if (s->trailing_pieces.empty() || s->trailing_pieces.back() != p)
+                s->trailing_pieces.push_back(p);
+            while ((int)s->trailing_pieces.size() > StreamEngine::TRAILING_WINDOW) {
+                int old_p = s->trailing_pieces.front();
+                s->trailing_pieces.pop_front();
+                try {
+                    s->handle.piece_priority(lt::piece_index_t(old_p), lt::dont_download);
+                } catch (...) {}
+                // Release cache memory for evicted piece
+                if (s->cache) {
+                    auto* cp = s->cache->get_piece(old_p);
+                    if (cp) {
+                        std::unique_lock<std::shared_mutex> clk(cp->mu);
+                        cp->buffer.clear();
+                        cp->buffer.shrink_to_fit();
+                        cp->size = 0;
+                        cp->complete = false;
+                    }
+                }
+            }
+        }
     }
     TB_LOG("serve_range: DONE cursor=%lld end=%lld", (long long)cursor, (long long)range_end);
     return true;
@@ -1426,6 +1486,19 @@ static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
                 }
                 s->read_cv.notify_all();
 
+                // Flush trailing retention window — drop old pieces to
+                // free bandwidth for the new seek position
+                {
+                    std::lock_guard<std::mutex> tlk(s->trailing_mu);
+                    for (int old_p : s->trailing_pieces) {
+                        try {
+                            s->handle.piece_priority(
+                                lt::piece_index_t(old_p), lt::dont_download);
+                        } catch (...) {}
+                    }
+                    s->trailing_pieces.clear();
+                }
+
                 int seek_piece = std::clamp(s->byte_to_piece(rstart),
                                             s->start_piece, s->end_piece);
                 try {
@@ -1467,9 +1540,6 @@ static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
                     for (int i = 1; i < 4 && seek_piece + i <= s->end_piece; ++i)
                         s->handle.set_piece_deadline(
                             lt::piece_index_t(seek_piece + i), i * 300);
-
-                    // sequential_download kept ON — serve_range controls
-                    // piece order explicitly via priorities + deadlines.
 
                     // 5. FORCE resume — prevents finished/seeding state
                     //    which would kill all downloads.
@@ -2161,6 +2231,31 @@ TORRENT_API lt_stream_id lt_start_stream(lt_session_t session,
     s->head_end_piece  = std::min(s->start_piece + prot_pieces - 1, s->end_piece);
     s->tail_start_piece = std::max(s->end_piece - prot_pieces + 1, s->start_piece);
 
+    // ── Adaptive bitrate estimation ──
+    // Estimate media bitrate from file size assuming typical video duration.
+    // This is crude but vastly better than a fixed 5 Mbps for ALL files.
+    // A 1.2GB file ≈ 1.5h movie ≈ ~1.5 MB/s; a 4GB file ≈ 2h movie ≈ ~3.3 MB/s
+    {
+        float duration_guess;
+        if      (s->file_size < 400LL * 1024 * 1024)            duration_guess = 3600.0f;  // <400MB → 1h (episode)
+        else if (s->file_size < 1LL * 1024 * 1024 * 1024)       duration_guess = 5400.0f;  // <1GB → 1.5h
+        else if (s->file_size < 3LL * 1024 * 1024 * 1024)       duration_guess = 6600.0f;  // <3GB → 1.8h
+        else if (s->file_size < 8LL * 1024 * 1024 * 1024)       duration_guess = 7200.0f;  // <8GB → 2h
+        else                                                     duration_guess = 9000.0f;  // 8GB+ → 2.5h
+        s->estimated_bitrate_bps = (float)s->file_size / duration_guess;
+
+        // Critical startup: target ~2 seconds of video, but at least 1 piece
+        // and at most 5 pieces. For a 4GB file with 4MB pieces and ~3.3MB/s
+        // bitrate, this gives max(1, 6.6/4) = 1-2 pieces instead of 5.
+        int startup_bytes = (int)(s->estimated_bitrate_bps * 2.0f);
+        startup_bytes = std::max(startup_bytes, s->piece_length);
+        s->critical_startup_pieces = std::clamp(startup_bytes / s->piece_length, 1, 5);
+
+        TB_LOG("ADAPTIVE: file_size=%lldMB piece=%dKB bitrate_est=%.0fKB/s critical_pieces=%d",
+               (long long)(s->file_size / (1024*1024)), s->piece_length / 1024,
+               s->estimated_bitrate_bps / 1024.0f, s->critical_startup_pieces);
+    }
+
     // ── TorrCache initialization — port of torrstor.NewCache + Cache.Init ──
     // Use session-level bt_config cache_size, fall back to explicit arg, then default 64MB
     int64_t cache_capacity = (max_cache_bytes > 0) ? max_cache_bytes
@@ -2190,37 +2285,42 @@ TORRENT_API lt_stream_id lt_start_stream(lt_session_t session,
         std::vector<lt::download_priority_t> prios(
             (size_t)ti->num_pieces(), lt::dont_download);
 
-        // First 5 pieces — what the player needs to start
-        for (int p = s->start_piece; p <= std::min(s->start_piece + 4, s->end_piece); ++p)
+        // Critical startup pieces — adaptive count based on bitrate estimate.
+        // These get top_priority + tight deadlines to minimize time-to-first-frame.
+        int crit = s->critical_startup_pieces;
+        for (int p = s->start_piece; p <= std::min(s->start_piece + crit - 1, s->end_piece); ++p)
             prios[p] = lt::top_priority;
 
-        // Next head pieces at high priority
-        for (int p = s->start_piece + 5; p <= s->head_end_piece; ++p)
-            prios[p] = lt::download_priority_t(6);
+        // Remaining head pieces at lower priority — they'll download after
+        // critical pieces without competing for bandwidth
+        for (int p = s->start_piece + crit; p <= s->head_end_piece; ++p)
+            prios[p] = lt::download_priority_t(4);
 
-        // Tail pieces for moov atom
+        // Tail pieces for moov atom — priority 5 (below head critical,
+        // above remaining head). For large files this prevents tail from
+        // stealing bandwidth that the first frame needs.
         for (int p = s->tail_start_piece; p <= s->end_piece; ++p)
-            prios[p] = lt::top_priority;
+            prios[p] = lt::download_priority_t(5);
 
         handle.prioritize_pieces(prios);
 
-        // Deadlines for time-critical pieces
-        handle.set_piece_deadline(lt::piece_index_t(s->start_piece), 0);
-        for (int i = 1; i <= 4 && s->start_piece + i <= s->end_piece; ++i)
+        // Deadlines: critical pieces get tight deadlines (0-100ms),
+        // tail gets pushed back (1000ms) so time-critical picker
+        // strongly favors head over tail.
+        for (int i = 0; i < crit && s->start_piece + i <= s->end_piece; ++i)
             handle.set_piece_deadline(
                 lt::piece_index_t(s->start_piece + i), i * 50);
         for (int p = s->tail_start_piece; p <= s->end_piece; ++p)
-            handle.set_piece_deadline(lt::piece_index_t(p), 100);
+            handle.set_piece_deadline(lt::piece_index_t(p), 1000);
 
         // NOW resume — priorities are already set, no random downloads
         handle.resume();
 
-        // Enable sequential download mode for streaming.
-        // Ensures pieces are picked in order among equal-priority pieces,
-        // crucial for startup (0,1,2... in order) and seeking (seek target
-        // piece arrives before higher-indexed ones).
-        // See https://github.com/arvidn/libtorrent/issues/7666
-        handle.set_flags(lt::torrent_flags::sequential_download);
+        // Do NOT use sequential_download — let deadlines drive piece order.
+        // libtorrent's time-critical picker (via set_piece_deadline) is the
+        // proper streaming mechanism. Sequential mode fights deadline-driven
+        // scheduling and reduces swarm efficiency during seeks.
+        handle.unset_flags(lt::torrent_flags::sequential_download);
 
         // populate pieces we already have — mark them in pieces_have set.
         // Only load nearby pieces into RAM cache (head + tail).
@@ -2360,8 +2460,8 @@ static void fill_stream_status(lt_stream_status* out, const StreamEngine* s) {
     }
     out->buffer_pieces = contiguous;
 
-    // ~5 Mbps bitrate estimate as fallback
-    float bitrate = 625000.0f;
+    // Use estimated bitrate for buffer reporting — adaptive to file size
+    float bitrate = s->estimated_bitrate_bps;
     out->buffer_seconds = (float)contiguous * s->piece_length / bitrate;
 
     // telemetry from handle

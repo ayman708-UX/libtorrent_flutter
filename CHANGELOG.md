@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.4
+
+- **Streaming**: Removed `sequential_download` mode — piece order is now driven entirely by `set_piece_deadline`, libtorrent's purpose-built time-critical mechanism. Improves seek recovery and swarm efficiency
+- **Streaming**: Added hot piece cache — `on_piece_read` populates `CachePiece` buffers in memory, `read_piece_data` checks cache first. Instant re-reads for player probes, overlapping range requests, and small backward seeks
+- **Streaming**: Trailing retention window — last 3 played pieces are kept alive instead of being immediately set to `dont_download`. Handles player re-reads and small rewinds without re-downloading
+- **Streaming**: Adaptive bitrate estimation — startup piece count and buffer reporting now scale with file size. A 1.2 GB file gets ~2 critical startup pieces; a 4 GB file gets 1–2 instead of the old fixed 5, dramatically reducing time-to-first-frame for large files
+- **Streaming**: Tail (moov atom) priority lowered from `top_priority` to priority 5 with 1000 ms deadlines — head startup pieces (priority 7, deadline 0–100 ms) always win the time-critical picker, preventing tail downloads from stealing bandwidth at startup
+- **Seeking**: Trailing retention window is flushed on seek — old played pieces are dropped to `dont_download` immediately, freeing all bandwidth for the new seek position
+
 ## 1.7.3
 
 - **FIX (CRASH)**: Fixed `SIGABRT` crash on stream shutdown — `cache->close()` destroyed `TorrReader` objects and their mutexes while HTTP client threads were still using them. Reordered shutdown to join all threads before closing the cache
