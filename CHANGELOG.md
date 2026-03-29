@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.5
+
+- **Build (macOS)**: Universal binary support — `build_macos.sh` now builds arm64 and x86_64 separately (linking against their respective Homebrew OpenSSL), then merges with `lipo -create`. All output dylibs (`liblibtorrent_flutter`, `libssl.3`, `libcrypto.3`) are true universal binaries
+- **CI (macOS)**: Workflow installs both ARM and Intel Homebrew with dependencies, then delegates to `build_macos.sh` for the universal build
+
 ## 1.7.4
 
 - **Streaming**: Removed `sequential_download` mode — piece order is now driven entirely by `set_piece_deadline`, libtorrent's purpose-built time-critical mechanism. Improves seek recovery and swarm efficiency
