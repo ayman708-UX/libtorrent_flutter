@@ -696,175 +696,22 @@ jobs:
           ls -la build-ios-arm64/liblibtorrent_flutter.a
           echo "✅ iOS arm64 static build (encryption ON) succeeded"
 
-      - name: Build libtorrent for iOS Simulator x86_64 (with encryption)
+      - name: Create XCFramework (device only)
         run: |
-          cd libtorrent-src && mkdir build-sim-x86_64 && cd build-sim-x86_64
-
-          SIM_SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
-          OSSL_ROOT="$GITHUB_WORKSPACE/openssl-install-iossimulator-xcrun-x86_64"
-          cmake .. \
-            -DCMAKE_SYSTEM_NAME=iOS \
-            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
-            -DCMAKE_OSX_SYSROOT=$SIM_SDK \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-            -DBUILD_SHARED_LIBS=OFF \
-            -Ddeprecated-functions=ON \
-            -Dencryption=ON \
-            -Dwebtorrent=ON \
-            -DOPENSSL_ROOT_DIR="$OSSL_ROOT" \
-            -DOPENSSL_INCLUDE_DIR="$OSSL_ROOT/include" \
-            -DOPENSSL_CRYPTO_LIBRARY="$OSSL_ROOT/lib/libcrypto.a" \
-            -DOPENSSL_SSL_LIBRARY="$OSSL_ROOT/lib/libssl.a" \
-            -DOPENSSL_USE_STATIC_LIBS=ON \
-            -DBOOST_ROOT=$(brew --prefix boost) \
-            -DBoost_INCLUDE_DIR=$(brew --prefix boost)/include \
-            -G Ninja -Wno-dev
-          ninja -j$(sysctl -n hw.ncpu)
-        timeout-minutes: 25
-
-      - name: Build torrent_bridge for iOS Simulator x86_64
-        run: |
-          LT_LIB=$(find libtorrent-src/build-sim-x86_64 -name "libtorrent-rasterbar.a" | head -1)
-          BOOST_INC=$(brew --prefix boost)/include
-          SIM_SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
-          OSSL_ROOT="$GITHUB_WORKSPACE/openssl-install-iossimulator-xcrun-x86_64"
-
-          mkdir -p build-ios-sim-x86_64
-          clang++ -c -O3 -std=c++17 -fPIC \
-            -target x86_64-apple-ios13.0-simulator \
-            -isysroot $SIM_SDK \
-            -DTORRENT_BRIDGE_EXPORTS \
-            -DTORRENT_USE_OPENSSL \
-            -DBOOST_NO_IOSTREAM \
-            -Ilibtorrent-src/include \
-            -Ilibtorrent-src/build-sim-x86_64/include \
-            -I${BOOST_INC} \
-            -I${OSSL_ROOT}/include \
-            -o build-ios-sim-x86_64/torrent_bridge.o \
-            src/torrent_bridge.cpp
-
-          cp "$LT_LIB" build-ios-sim-x86_64/libtorrent-rasterbar.a
-          ar x build-ios-sim-x86_64/libtorrent-rasterbar.a
-          mkdir -p build-ios-sim-x86_64/lt_objects
-          mv *.o build-ios-sim-x86_64/lt_objects/ 2>/dev/null || true
-          mkdir -p build-ios-sim-x86_64/ssl_objects && cd build-ios-sim-x86_64/ssl_objects
-          ar x ${OSSL_ROOT}/lib/libssl.a
-          ar x ${OSSL_ROOT}/lib/libcrypto.a
-          cd ../..
-          mkdir -p build-ios-sim-x86_64/rtc_objects && cd build-ios-sim-x86_64/rtc_objects
-          ar x "$GITHUB_WORKSPACE/libtorrent-src/build-sim-x86_64/deps/libdatachannel/libdatachannel-static.a"
-          ar x "$GITHUB_WORKSPACE/libtorrent-src/build-sim-x86_64/deps/libdatachannel/deps/libjuice/libjuice-static.a"
-          ar x "$GITHUB_WORKSPACE/libtorrent-src/build-sim-x86_64/deps/libdatachannel/deps/usrsctp/usrsctplib/libusrsctp.a"
-          cd ../..
-          ar rcs build-ios-sim-x86_64/liblibtorrent_flutter.a \
-            build-ios-sim-x86_64/torrent_bridge.o \
-            build-ios-sim-x86_64/lt_objects/*.o \
-            build-ios-sim-x86_64/ssl_objects/*.o \
-            build-ios-sim-x86_64/rtc_objects/*.o
-
-          ls -la build-ios-sim-x86_64/liblibtorrent_flutter.a
-          echo "✅ iOS Simulator x86_64 (encryption ON) succeeded"
-
-      - name: Build libtorrent for iOS Simulator arm64 (Apple Silicon, with encryption)
-        run: |
-          cd libtorrent-src && mkdir build-sim-arm64 && cd build-sim-arm64
-
-          SIM_SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
-          OSSL_ROOT="$GITHUB_WORKSPACE/openssl-install-iossimulator-xcrun-arm64"
-          cmake .. \
-            -DCMAKE_SYSTEM_NAME=iOS \
-            -DCMAKE_OSX_ARCHITECTURES=arm64 \
-            -DCMAKE_OSX_SYSROOT=$SIM_SDK \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-            -DBUILD_SHARED_LIBS=OFF \
-            -Ddeprecated-functions=ON \
-            -Dencryption=ON \
-            -Dwebtorrent=ON \
-            -DOPENSSL_ROOT_DIR="$OSSL_ROOT" \
-            -DOPENSSL_INCLUDE_DIR="$OSSL_ROOT/include" \
-            -DOPENSSL_CRYPTO_LIBRARY="$OSSL_ROOT/lib/libcrypto.a" \
-            -DOPENSSL_SSL_LIBRARY="$OSSL_ROOT/lib/libssl.a" \
-            -DOPENSSL_USE_STATIC_LIBS=ON \
-            -DBOOST_ROOT=$(brew --prefix boost) \
-            -DBoost_INCLUDE_DIR=$(brew --prefix boost)/include \
-            -G Ninja -Wno-dev
-          ninja -j$(sysctl -n hw.ncpu)
-        timeout-minutes: 25
-
-      - name: Build torrent_bridge for iOS Simulator arm64
-        run: |
-          LT_LIB=$(find libtorrent-src/build-sim-arm64 -name "libtorrent-rasterbar.a" | head -1)
-          BOOST_INC=$(brew --prefix boost)/include
-          SIM_SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
-          OSSL_ROOT="$GITHUB_WORKSPACE/openssl-install-iossimulator-xcrun-arm64"
-
-          mkdir -p build-ios-sim-arm64
-          clang++ -c -O3 -std=c++17 -fPIC \
-            -target arm64-apple-ios13.0-simulator \
-            -isysroot $SIM_SDK \
-            -DTORRENT_BRIDGE_EXPORTS \
-            -DTORRENT_USE_OPENSSL \
-            -DBOOST_NO_IOSTREAM \
-            -Ilibtorrent-src/include \
-            -Ilibtorrent-src/build-sim-arm64/include \
-            -I${BOOST_INC} \
-            -I${OSSL_ROOT}/include \
-            -o build-ios-sim-arm64/torrent_bridge.o \
-            src/torrent_bridge.cpp
-
-          cp "$LT_LIB" build-ios-sim-arm64/libtorrent-rasterbar.a
-          ar x build-ios-sim-arm64/libtorrent-rasterbar.a
-          mkdir -p build-ios-sim-arm64/lt_objects
-          mv *.o build-ios-sim-arm64/lt_objects/ 2>/dev/null || true
-          mkdir -p build-ios-sim-arm64/ssl_objects && cd build-ios-sim-arm64/ssl_objects
-          ar x ${OSSL_ROOT}/lib/libssl.a
-          ar x ${OSSL_ROOT}/lib/libcrypto.a
-          cd ../..
-          mkdir -p build-ios-sim-arm64/rtc_objects && cd build-ios-sim-arm64/rtc_objects
-          ar x "$GITHUB_WORKSPACE/libtorrent-src/build-sim-arm64/deps/libdatachannel/libdatachannel-static.a"
-          ar x "$GITHUB_WORKSPACE/libtorrent-src/build-sim-arm64/deps/libdatachannel/deps/libjuice/libjuice-static.a"
-          ar x "$GITHUB_WORKSPACE/libtorrent-src/build-sim-arm64/deps/libdatachannel/deps/usrsctp/usrsctplib/libusrsctp.a"
-          cd ../..
-          ar rcs build-ios-sim-arm64/liblibtorrent_flutter.a \
-            build-ios-sim-arm64/torrent_bridge.o \
-            build-ios-sim-arm64/lt_objects/*.o \
-            build-ios-sim-arm64/ssl_objects/*.o \
-            build-ios-sim-arm64/rtc_objects/*.o
-
-          ls -la build-ios-sim-arm64/liblibtorrent_flutter.a
-          echo "✅ iOS Simulator arm64 (encryption ON) succeeded"
-
-      - name: Create XCFramework (device + universal simulator)
-        run: |
-          # Merge x86_64 + arm64 simulator slices into a fat simulator lib
-          mkdir -p build-ios-sim-universal
-          lipo -create \
-            build-ios-sim-x86_64/liblibtorrent_flutter.a \
-            build-ios-sim-arm64/liblibtorrent_flutter.a \
-            -output build-ios-sim-universal/liblibtorrent_flutter.a
-          lipo -info build-ios-sim-universal/liblibtorrent_flutter.a
-
           # Prepare headers directory
           mkdir -p build-ios-headers
           cp src/torrent_bridge.h build-ios-headers/
 
-          # Create XCFramework with device + simulator
+          # Create XCFramework with device only
           rm -rf prebuilt/ios/libtorrent_flutter.xcframework
           xcodebuild -create-xcframework \
             -library build-ios-arm64/liblibtorrent_flutter.a \
-            -headers build-ios-headers/ \
-            -library build-ios-sim-universal/liblibtorrent_flutter.a \
             -headers build-ios-headers/ \
             -output prebuilt/ios/libtorrent_flutter.xcframework
 
           echo "=== XCFramework contents ==="
           find prebuilt/ios/libtorrent_flutter.xcframework -type f | head -20
-          echo "✅ XCFramework created successfully"
-
+          echo "? XCFramework created successfully"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
