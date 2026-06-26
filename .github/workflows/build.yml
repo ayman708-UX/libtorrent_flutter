@@ -668,30 +668,15 @@ jobs:
             -o build-ios-arm64/torrent_bridge.o \
             src/torrent_bridge.cpp
 
-          # Create a fat static library: bridge + libtorrent + OpenSSL
-          cp "$LT_LIB" build-ios-arm64/libtorrent-rasterbar.a
-          ar x build-ios-arm64/libtorrent-rasterbar.a
-          mkdir -p build-ios-arm64/lt_objects
-          mv *.o build-ios-arm64/lt_objects/ 2>/dev/null || true
-
-          # Extract OpenSSL .a contents so all symbols (RC4, RSA, SHA, etc.
-          # used by libtorrent's MSE handshake) end up in the merged lib.
-          mkdir -p build-ios-arm64/ssl_objects && cd build-ios-arm64/ssl_objects
-          ar x ${OSSL_ROOT}/lib/libssl.a
-          ar x ${OSSL_ROOT}/lib/libcrypto.a
-          cd ../..
-
-          mkdir -p build-ios-arm64/rtc_objects && cd build-ios-arm64/rtc_objects
-          ar x "$GITHUB_WORKSPACE/libtorrent-src/build-ios/deps/libdatachannel/libdatachannel-static.a"
-          ar x "$GITHUB_WORKSPACE/libtorrent-src/build-ios/deps/libdatachannel/deps/libjuice/libjuice-static.a"
-          ar x "$GITHUB_WORKSPACE/libtorrent-src/build-ios/deps/libdatachannel/deps/usrsctp/usrsctplib/libusrsctp.a"
-          cd ../..
-
-          ar rcs build-ios-arm64/liblibtorrent_flutter.a \
+          # Create a fat static library: bridge + libtorrent + OpenSSL + WebRTC
+          # Using libtool prevents .o filename collisions from ar x extraction
+          # and correctly grabs all dependencies like libsrtp2.a dynamically.
+          libtool -static -o build-ios-arm64/liblibtorrent_flutter.a \
             build-ios-arm64/torrent_bridge.o \
-            build-ios-arm64/lt_objects/*.o \
-            build-ios-arm64/ssl_objects/*.o \
-            build-ios-arm64/rtc_objects/*.o
+            "$LT_LIB" \
+            "${OSSL_ROOT}/lib/libssl.a" \
+            "${OSSL_ROOT}/lib/libcrypto.a" \
+            $(find "$GITHUB_WORKSPACE/libtorrent-src/build-ios/deps/libdatachannel" -name "*.a")
 
           ls -la build-ios-arm64/liblibtorrent_flutter.a
           echo "✅ iOS arm64 static build (encryption ON) succeeded"

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.8.7
+
+- Fix iOS Xcode undefined symbol errors by safely merging WebRTC and OpenSSL static libraries.
+
+## 1.8.6
+
+- WebTorrent support added
+
 ## 1.8.5
 
 - Metadata-only release to improve pub.dev score (no code changes).
