@@ -20,10 +20,10 @@ jobs:
       matrix:
         include:
           - arch: x64
-            runner: ubuntu-22.04
+            runner: ubuntu-24.04
           - arch: arm64
             # GitHub's native ARM64 Linux runner — free for public repos.
-            runner: ubuntu-22.04-arm
+            runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -73,6 +73,7 @@ jobs:
           mkdir -p build-linux
           g++ -shared -fPIC -O2 -std=c++17 \
             -DTORRENT_BRIDGE_EXPORTS \
+            -DTORRENT_USE_OPENSSL \
             -Ilibtorrent-src/include \
             -Ilibtorrent-src/build/include \
             -o build-linux/liblibtorrent_flutter.so \
@@ -203,6 +204,9 @@ jobs:
                 -Dencryption=ON \
                 -Dwebtorrent=ON \
                 -DOPENSSL_ROOT_DIR="${ossl_root}" \
+                -DOPENSSL_INCLUDE_DIR="${ossl_root}/include" \
+                -DOPENSSL_CRYPTO_LIBRARY="${ossl_root}/lib/libcrypto.a" \
+                -DOPENSSL_SSL_LIBRARY="${ossl_root}/lib/libssl.a" \
                 -DOPENSSL_USE_STATIC_LIBS=ON \
                 -DBOOST_ROOT="${BOOST_ROOT}" \
                 -DBoost_INCLUDE_DIR="${BOOST_ROOT}" \
@@ -222,7 +226,7 @@ jobs:
               -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET} \
               -isysroot ${sdk} \
               -DTORRENT_BRIDGE_EXPORTS \
-              -DTORRENT_NO_DEPRECATE \
+              -DTORRENT_USE_OPENSSL \
               -Ilibtorrent-src/include \
               -I${slice_dir}/include \
               -I${BOOST_ROOT} \
@@ -308,7 +312,7 @@ jobs:
           echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
       - name: Install dependencies via vcpkg
-        run: C:\vcpkg\vcpkg.exe install boost-system:${{ matrix.triplet }} openssl:${{ matrix.triplet }}
+        run: C:\vcpkg\vcpkg.exe install boost-system:${{ matrix.triplet }} boost-json:${{ matrix.triplet }} boost-asio:${{ matrix.triplet }} boost-multiprecision:${{ matrix.triplet }} boost-container:${{ matrix.triplet }} boost-range:${{ matrix.triplet }} boost-logic:${{ matrix.triplet }} boost-smart-ptr:${{ matrix.triplet }} openssl:${{ matrix.triplet }}
         timeout-minutes: 90
 
       - name: Build libtorrent
@@ -507,7 +511,7 @@ jobs:
             -shared -fPIC -O3 -std=c++17 \
             -flto \
             -DTORRENT_BRIDGE_EXPORTS \
-            -DTORRENT_NO_DEPRECATE \
+            -DTORRENT_USE_OPENSSL \
             -DBOOST_NO_IOSTREAM \
             -I$LT_SRC_DIR/include \
             -I$LT_BUILD_DIR/include \
@@ -614,6 +618,9 @@ jobs:
             -Dencryption=ON \
             -Dwebtorrent=ON \
             -DOPENSSL_ROOT_DIR="$OSSL_ROOT" \
+            -DOPENSSL_INCLUDE_DIR="$OSSL_ROOT/include" \
+            -DOPENSSL_CRYPTO_LIBRARY="$OSSL_ROOT/lib/libcrypto.a" \
+            -DOPENSSL_SSL_LIBRARY="$OSSL_ROOT/lib/libssl.a" \
             -DOPENSSL_USE_STATIC_LIBS=ON \
             -DBOOST_ROOT=$(brew --prefix boost) \
             -DBoost_INCLUDE_DIR=$(brew --prefix boost)/include \
@@ -642,7 +649,7 @@ jobs:
             -target arm64-apple-ios13.0 \
             -isysroot $IOS_SDK \
             -DTORRENT_BRIDGE_EXPORTS \
-            -DTORRENT_NO_DEPRECATE \
+            -DTORRENT_USE_OPENSSL \
             -DBOOST_NO_IOSTREAM \
             -Ilibtorrent-src/include \
             -Ilibtorrent-src/build-ios/include \
@@ -690,6 +697,9 @@ jobs:
             -Dencryption=ON \
             -Dwebtorrent=ON \
             -DOPENSSL_ROOT_DIR="$OSSL_ROOT" \
+            -DOPENSSL_INCLUDE_DIR="$OSSL_ROOT/include" \
+            -DOPENSSL_CRYPTO_LIBRARY="$OSSL_ROOT/lib/libcrypto.a" \
+            -DOPENSSL_SSL_LIBRARY="$OSSL_ROOT/lib/libssl.a" \
             -DOPENSSL_USE_STATIC_LIBS=ON \
             -DBOOST_ROOT=$(brew --prefix boost) \
             -DBoost_INCLUDE_DIR=$(brew --prefix boost)/include \
@@ -709,7 +719,7 @@ jobs:
             -target x86_64-apple-ios13.0-simulator \
             -isysroot $SIM_SDK \
             -DTORRENT_BRIDGE_EXPORTS \
-            -DTORRENT_NO_DEPRECATE \
+            -DTORRENT_USE_OPENSSL \
             -DBOOST_NO_IOSTREAM \
             -Ilibtorrent-src/include \
             -Ilibtorrent-src/build-sim-x86_64/include \
@@ -752,6 +762,9 @@ jobs:
             -Dencryption=ON \
             -Dwebtorrent=ON \
             -DOPENSSL_ROOT_DIR="$OSSL_ROOT" \
+            -DOPENSSL_INCLUDE_DIR="$OSSL_ROOT/include" \
+            -DOPENSSL_CRYPTO_LIBRARY="$OSSL_ROOT/lib/libcrypto.a" \
+            -DOPENSSL_SSL_LIBRARY="$OSSL_ROOT/lib/libssl.a" \
             -DOPENSSL_USE_STATIC_LIBS=ON \
             -DBOOST_ROOT=$(brew --prefix boost) \
             -DBoost_INCLUDE_DIR=$(brew --prefix boost)/include \
@@ -771,7 +784,7 @@ jobs:
             -target arm64-apple-ios13.0-simulator \
             -isysroot $SIM_SDK \
             -DTORRENT_BRIDGE_EXPORTS \
-            -DTORRENT_NO_DEPRECATE \
+            -DTORRENT_USE_OPENSSL \
             -DBOOST_NO_IOSTREAM \
             -Ilibtorrent-src/include \
             -Ilibtorrent-src/build-sim-arm64/include \
