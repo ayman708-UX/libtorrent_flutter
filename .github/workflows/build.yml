@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 env:
-  LIBTORRENT_VERSION: "2.0.11"
+  LIBTORRENT_VERSION: "2.1.0-rc2"
 
 jobs:
   # ═══════════════════════════════════════════════════════════════════════════════
@@ -46,6 +46,7 @@ jobs:
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DBUILD_SHARED_LIBS=OFF \
             -Ddeprecated-functions=ON \
+            -Dwebtorrent=ON \
             -G Ninja -Wno-dev
           ninja -j$(nproc)
           echo "=== Static lib ==="
@@ -200,6 +201,7 @@ jobs:
                 -DBUILD_SHARED_LIBS=OFF \
                 -Ddeprecated-functions=OFF \
                 -Dencryption=ON \
+                -Dwebtorrent=ON \
                 -DOPENSSL_ROOT_DIR="${ossl_root}" \
                 -DOPENSSL_USE_STATIC_LIBS=ON \
                 -DBOOST_ROOT="${BOOST_ROOT}" \
@@ -305,8 +307,27 @@ jobs:
           C:\vcpkg\bootstrap-vcpkg.bat
           echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
-      - name: Install libtorrent via vcpkg (static, ${{ matrix.triplet }})
-        run: C:\vcpkg\vcpkg.exe install libtorrent:${{ matrix.triplet }}
+      - name: Install dependencies via vcpkg
+        run: C:\vcpkg\vcpkg.exe install boost-system:${{ matrix.triplet }} openssl:${{ matrix.triplet }}
+        timeout-minutes: 90
+
+      - name: Build libtorrent
+        run: |
+          git clone --depth 1 --branch v${{ env.LIBTORRENT_VERSION }} --recurse-submodules https://github.com/arvidn/libtorrent.git libtorrent-src
+          mkdir libtorrent-src\build
+          cd libtorrent-src\build
+          cmake .. `
+            -A ${{ matrix.cmake_arch }} `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="C:\vcpkg\scripts\buildsystems\vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -DBUILD_SHARED_LIBS=OFF `
+            -Ddeprecated-functions=OFF `
+            -Dwebtorrent=ON `
+            -Dencryption=ON `
+            -DCMAKE_INSTALL_PREFIX="..\install"
+          cmake --build . --config Release --target install
         timeout-minutes: 90
 
       - name: Build native library
@@ -318,7 +339,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE="C:\vcpkg\scripts\buildsystems\vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} `
-            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -DCMAKE_PREFIX_PATH="..\libtorrent-src\install"
           cmake --build . --config Release
 
       - name: Copy to prebuilt
@@ -416,7 +438,7 @@ jobs:
         env:
           NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          git clone --depth 1 --recurse-submodules --branch v2.0.11 https://github.com/arvidn/libtorrent.git libtorrent-src
+          git clone --depth 1 --recurse-submodules --branch v${LIBTORRENT_VERSION} https://github.com/arvidn/libtorrent.git libtorrent-src
           cd libtorrent-src
 
           # Detect OpenSSL lib directory (lib or lib64 depending on ABI)
@@ -439,6 +461,7 @@ jobs:
             -Dstatic_runtime=ON \
             -Ddeprecated-functions=OFF \
             -Dencryption=ON \
+            -Dwebtorrent=ON \
             -DOPENSSL_ROOT_DIR=$OPENSSL_ROOT \
             -DOPENSSL_INCLUDE_DIR=$OPENSSL_ROOT/include \
             -DOPENSSL_CRYPTO_LIBRARY=$OSSL_LIB_DIR/libcrypto.a \
@@ -589,6 +612,7 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             -Ddeprecated-functions=OFF \
             -Dencryption=ON \
+            -Dwebtorrent=ON \
             -DOPENSSL_ROOT_DIR="$OSSL_ROOT" \
             -DOPENSSL_USE_STATIC_LIBS=ON \
             -DBOOST_ROOT=$(brew --prefix boost) \
@@ -664,6 +688,7 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             -Ddeprecated-functions=OFF \
             -Dencryption=ON \
+            -Dwebtorrent=ON \
             -DOPENSSL_ROOT_DIR="$OSSL_ROOT" \
             -DOPENSSL_USE_STATIC_LIBS=ON \
             -DBOOST_ROOT=$(brew --prefix boost) \
@@ -725,6 +750,7 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             -Ddeprecated-functions=OFF \
             -Dencryption=ON \
+            -Dwebtorrent=ON \
             -DOPENSSL_ROOT_DIR="$OSSL_ROOT" \
             -DOPENSSL_USE_STATIC_LIBS=ON \
             -DBOOST_ROOT=$(brew --prefix boost) \
