@@ -79,6 +79,9 @@ jobs:
             -o build-linux/liblibtorrent_flutter.so \
             src/torrent_bridge.cpp \
             -Wl,--whole-archive "$LT_LIB" -Wl,--no-whole-archive \
+            "libtorrent-src/build/deps/libdatachannel/libdatachannel-static.a" \
+            "libtorrent-src/build/deps/libdatachannel/deps/libjuice/libjuice-static.a" \
+            "libtorrent-src/build/deps/libdatachannel/deps/usrsctp/usrsctplib/libusrsctp.a" \
             -Wl,-Bstatic -l:libssl.a -l:libcrypto.a -Wl,-Bdynamic \
             -lpthread -ldl
 
@@ -234,7 +237,11 @@ jobs:
               -o "${out_dir}/liblibtorrent_flutter.dylib" \
               src/torrent_bridge.cpp \
               -Wl,-force_load,"${lt_lib}" \
-              ${ossl_root}/lib/libssl.a ${ossl_root}/lib/libcrypto.a \
+              -Wl,-force_load,"${slice_dir}/deps/libdatachannel/libdatachannel-static.a" \
+              -Wl,-force_load,"${slice_dir}/deps/libdatachannel/deps/libjuice/libjuice-static.a" \
+              -Wl,-force_load,"${slice_dir}/deps/libdatachannel/deps/usrsctp/usrsctplib/libusrsctp.a" \
+              -Wl,-force_load,"${ossl_root}/lib/libssl.a" \
+              -Wl,-force_load,"${ossl_root}/lib/libcrypto.a" \
               -framework CoreFoundation -framework SystemConfiguration \
               -install_name @rpath/liblibtorrent_flutter.dylib
 
@@ -520,8 +527,10 @@ jobs:
             -o liblibtorrent_flutter.so \
             ../src/torrent_bridge.cpp \
             -Wl,--whole-archive $LT_LIB -Wl,--no-whole-archive \
-            $OSSL_LIB_DIR/libssl.a $OSSL_LIB_DIR/libcrypto.a \
-            -llog \
+            $LT_BUILD_DIR/deps/libdatachannel/libdatachannel-static.a \
+            $LT_BUILD_DIR/deps/libdatachannel/deps/libjuice/libjuice-static.a \
+            $LT_BUILD_DIR/deps/libdatachannel/deps/usrsctp/usrsctplib/libusrsctp.a \
+            -Wl,-Bstatic -lcrypto -lssl -Wl,-Bdynamic \
             -static-libstdc++
 
           ls -la liblibtorrent_flutter.so
@@ -671,10 +680,17 @@ jobs:
           ar x ${OSSL_ROOT}/lib/libcrypto.a
           cd ../..
 
+          mkdir -p build-ios-arm64/rtc_objects && cd build-ios-arm64/rtc_objects
+          ar x "$GITHUB_WORKSPACE/libtorrent-src/build-ios/deps/libdatachannel/libdatachannel-static.a"
+          ar x "$GITHUB_WORKSPACE/libtorrent-src/build-ios/deps/libdatachannel/deps/libjuice/libjuice-static.a"
+          ar x "$GITHUB_WORKSPACE/libtorrent-src/build-ios/deps/libdatachannel/deps/usrsctp/usrsctplib/libusrsctp.a"
+          cd ../..
+
           ar rcs build-ios-arm64/liblibtorrent_flutter.a \
             build-ios-arm64/torrent_bridge.o \
             build-ios-arm64/lt_objects/*.o \
-            build-ios-arm64/ssl_objects/*.o
+            build-ios-arm64/ssl_objects/*.o \
+            build-ios-arm64/rtc_objects/*.o
 
           ls -la build-ios-arm64/liblibtorrent_flutter.a
           echo "✅ iOS arm64 static build (encryption ON) succeeded"
@@ -736,10 +752,16 @@ jobs:
           ar x ${OSSL_ROOT}/lib/libssl.a
           ar x ${OSSL_ROOT}/lib/libcrypto.a
           cd ../..
+          mkdir -p build-ios-sim-x86_64/rtc_objects && cd build-ios-sim-x86_64/rtc_objects
+          ar x "$GITHUB_WORKSPACE/libtorrent-src/build-sim-x86_64/deps/libdatachannel/libdatachannel-static.a"
+          ar x "$GITHUB_WORKSPACE/libtorrent-src/build-sim-x86_64/deps/libdatachannel/deps/libjuice/libjuice-static.a"
+          ar x "$GITHUB_WORKSPACE/libtorrent-src/build-sim-x86_64/deps/libdatachannel/deps/usrsctp/usrsctplib/libusrsctp.a"
+          cd ../..
           ar rcs build-ios-sim-x86_64/liblibtorrent_flutter.a \
             build-ios-sim-x86_64/torrent_bridge.o \
             build-ios-sim-x86_64/lt_objects/*.o \
-            build-ios-sim-x86_64/ssl_objects/*.o
+            build-ios-sim-x86_64/ssl_objects/*.o \
+            build-ios-sim-x86_64/rtc_objects/*.o
 
           ls -la build-ios-sim-x86_64/liblibtorrent_flutter.a
           echo "✅ iOS Simulator x86_64 (encryption ON) succeeded"
@@ -801,10 +823,16 @@ jobs:
           ar x ${OSSL_ROOT}/lib/libssl.a
           ar x ${OSSL_ROOT}/lib/libcrypto.a
           cd ../..
+          mkdir -p build-ios-sim-arm64/rtc_objects && cd build-ios-sim-arm64/rtc_objects
+          ar x "$GITHUB_WORKSPACE/libtorrent-src/build-sim-arm64/deps/libdatachannel/libdatachannel-static.a"
+          ar x "$GITHUB_WORKSPACE/libtorrent-src/build-sim-arm64/deps/libdatachannel/deps/libjuice/libjuice-static.a"
+          ar x "$GITHUB_WORKSPACE/libtorrent-src/build-sim-arm64/deps/libdatachannel/deps/usrsctp/usrsctplib/libusrsctp.a"
+          cd ../..
           ar rcs build-ios-sim-arm64/liblibtorrent_flutter.a \
             build-ios-sim-arm64/torrent_bridge.o \
             build-ios-sim-arm64/lt_objects/*.o \
-            build-ios-sim-arm64/ssl_objects/*.o
+            build-ios-sim-arm64/ssl_objects/*.o \
+            build-ios-sim-arm64/rtc_objects/*.o
 
           ls -la build-ios-sim-arm64/liblibtorrent_flutter.a
           echo "✅ iOS Simulator arm64 (encryption ON) succeeded"
