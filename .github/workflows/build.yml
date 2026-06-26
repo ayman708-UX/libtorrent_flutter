@@ -510,9 +510,9 @@ jobs:
 
           mkdir -p build-bridge && cd build-bridge
 
-          # Encryption is now ON — link OpenSSL and let libtorrent use it.
-          # Do NOT define TORRENT_USE_OPENSSL or TORRENT_USE_SSL manually;
-          # libtorrent's config.hpp auto-detects via the compiled-in support.
+          # Encryption is now ON - link OpenSSL and keep the bridge aligned
+          # with libtorrent's OpenSSL-enabled config. Do not force
+          # TORRENT_USE_SSL=0, which would create an ABI mismatch.
           $NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++ \
             --target=$TARGET \
             -shared -fPIC -O3 -std=c++17 \
@@ -530,7 +530,8 @@ jobs:
             $LT_BUILD_DIR/deps/libdatachannel/libdatachannel-static.a \
             $LT_BUILD_DIR/deps/libdatachannel/deps/libjuice/libjuice-static.a \
             $LT_BUILD_DIR/deps/libdatachannel/deps/usrsctp/usrsctplib/libusrsctp.a \
-            -Wl,-Bstatic -lcrypto -lssl -Wl,-Bdynamic \
+            "$OSSL_LIB_DIR/libssl.a" "$OSSL_LIB_DIR/libcrypto.a" \
+            -llog \
             -static-libstdc++
 
           ls -la liblibtorrent_flutter.so
