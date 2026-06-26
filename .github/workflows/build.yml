@@ -319,7 +319,7 @@ jobs:
           echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
       - name: Install dependencies via vcpkg
-        run: C:\vcpkg\vcpkg.exe install boost-system:${{ matrix.triplet }} boost-json:${{ matrix.triplet }} boost-asio:${{ matrix.triplet }} boost-multiprecision:${{ matrix.triplet }} boost-container:${{ matrix.triplet }} boost-range:${{ matrix.triplet }} boost-logic:${{ matrix.triplet }} boost-smart-ptr:${{ matrix.triplet }} openssl:${{ matrix.triplet }}
+        run: C:\vcpkg\vcpkg.exe install boost-system:${{ matrix.triplet }} boost-json:${{ matrix.triplet }} boost-asio:${{ matrix.triplet }} boost-multiprecision:${{ matrix.triplet }} boost-container:${{ matrix.triplet }} boost-range:${{ matrix.triplet }} boost-logic:${{ matrix.triplet }} boost-smart-ptr:${{ matrix.triplet }} boost-crc:${{ matrix.triplet }} boost-multi-index:${{ matrix.triplet }} boost-beast:${{ matrix.triplet }} openssl:${{ matrix.triplet }}
         timeout-minutes: 90
 
       - name: Build libtorrent
