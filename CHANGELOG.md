@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.8.8
+
+- Fix Android ABI mismatch causing native crashes due to mixing C++ STL implementations.
+
 ## 1.8.7
 
 - Fix iOS Xcode undefined symbol errors by safely merging WebRTC and OpenSSL static libraries.
