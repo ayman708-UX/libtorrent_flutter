@@ -2719,6 +2719,11 @@ TORRENT_API void lt_configure_session(lt_session_t session,
     // port of: bt.config.NoDHT = settings.BTsets.DisableDHT
     sp.set_bool(lt::settings_pack::enable_dht, !cfg.disable_dht);
 
+#ifdef __ANDROID__
+    // Disable HTTPS tracker validation on Android to fix WebTorrent wss:// timeouts
+    sp.set_bool(lt::settings_pack::validate_https_trackers, false);
+#endif
+
     // port of: bt.config.NoUpload = settings.BTsets.DisableUpload
     if (cfg.disable_upload) {
         sp.set_int(lt::settings_pack::upload_rate_limit, 1); // near-zero upload
