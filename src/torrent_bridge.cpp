@@ -21,6 +21,10 @@
 
 #include "torrent_bridge.h"
 
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
+
 #include <libtorrent/session.hpp>
 #include <libtorrent/settings_pack.hpp>
 #include <libtorrent/add_torrent_params.hpp>
@@ -1085,6 +1089,10 @@ struct SessionWrapper {
                                 dart_queue.push_back({a->type(), tid, a->message()});
                         }
 
+#ifdef __ANDROID__
+                        __android_log_print(ANDROID_LOG_DEBUG, "libtorrent_native", "%s", a->message().c_str());
+#endif
+
                         {
                             std::lock_guard<std::mutex> cl(cb_mu);
                             if (dart_callback)
@@ -1816,7 +1824,12 @@ TORRENT_API lt_session_t lt_create_session(const char* iface, int dl, int ul) {
             lt::alert_category::status
             | lt::alert_category::error
             | lt::alert_category::storage
-            | lt::alert_category::piece_progress);
+            | lt::alert_category::piece_progress
+            | lt::alert_category::tracker
+            | lt::alert_category::peer
+            | lt::alert_category::port_mapping
+            | lt::alert_category::dht
+            | lt::alert_category::session);
 
         sp.set_str(lt::settings_pack::listen_interfaces,
             (iface && *iface) ? iface : "0.0.0.0:6881,[::]:6881");
