@@ -1,8 +1,20 @@
 # Changelog
 
-## 1.8.12
+## 1.8.13
 
-- Revert to stable engine
+- Updated build script to compile against the `RC_2_1` branch of libtorrent to incorporate the latest upstream Android bug fixes.
+
+## 1.8.8
+
+- Fix Android ABI mismatch causing native crashes due to mixing C++ STL implementations.
+
+## 1.8.7
+
+- Fix iOS Xcode undefined symbol errors by safely merging WebRTC and OpenSSL static libraries.
+
+## 1.8.6
+
+- WebTorrent support added
 
 ## 1.8.5
 
