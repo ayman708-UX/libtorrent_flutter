@@ -165,6 +165,28 @@ class LibtorrentFlutter {
     final lib = TorrentBridgeBindings.open();
     engine._b = lib;
 
+    if (Platform.isAndroid) {
+      try {
+        final certFile = File('${Directory.systemTemp.path}/cacert.pem');
+        if (!await certFile.exists()) {
+          final client = HttpClient();
+          final req = await client.getUrl(Uri.parse('https://curl.se/ca/cacert.pem'));
+          final res = await req.close();
+          if (res.statusCode == 200) {
+            await res.pipe(certFile.openWrite());
+          }
+          client.close(force: true);
+        }
+        if (await certFile.exists()) {
+          final certPathPtr = certFile.path.toNativeUtf8();
+          engine._b.setSslCertPath(certPathPtr.cast<Utf8>());
+          malloc.free(certPathPtr);
+        }
+      } catch (e) {
+        print('Failed to setup Android SSL certs: $e');
+      }
+    }
+
     final iface = listenInterface.toNativeUtf8();
     try {
       final session = engine._b.createSession(iface, downloadLimit, uploadLimit);

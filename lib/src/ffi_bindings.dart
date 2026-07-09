@@ -71,6 +71,9 @@ typedef LtCreateSession = Pointer<LtSessionOpaque> Function(
 typedef _DestroySessionN = Void Function(Pointer<LtSessionOpaque>);
 typedef LtDestroySession = void Function(Pointer<LtSessionOpaque>);
 
+typedef _SetSslCertPathN = Void Function(Pointer<Utf8>);
+typedef LtSetSslCertPath = void Function(Pointer<Utf8>);
+
 typedef _PollAlertsN = Void Function(
     Pointer<LtSessionOpaque>,
     Pointer<NativeFunction<LtAlertCallbackNative>>,
@@ -254,6 +257,7 @@ class TorrentBridgeBindings {
   final DynamicLibrary _lib;
 
   late final LtCreateSession      createSession;
+  late final LtSetSslCertPath     setSslCertPath;
   late final LtDestroySession     destroySession;
   late final LtPollAlerts         pollAlerts;
   late final LtSetAlertCallback   setAlertCallback;
@@ -285,6 +289,7 @@ class TorrentBridgeBindings {
 
   TorrentBridgeBindings(this._lib) {
     createSession       = _lib.lookup<NativeFunction<_CreateSessionN>>('lt_create_session').asFunction<LtCreateSession>();
+    setSslCertPath      = _lib.lookup<NativeFunction<_SetSslCertPathN>>('lt_set_ssl_cert_path').asFunction<LtSetSslCertPath>();
     destroySession      = _lib.lookup<NativeFunction<_DestroySessionN>>('lt_destroy_session').asFunction<LtDestroySession>();
     pollAlerts          = _lib.lookup<NativeFunction<_PollAlertsN>>('lt_poll_alerts').asFunction<LtPollAlerts>();
     setAlertCallback    = _lib.lookup<NativeFunction<_SetAlertCallbackN>>('lt_set_alert_callback').asFunction<LtSetAlertCallback>();

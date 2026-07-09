@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.9.1
+
+- **CRITICAL FIX**: Fixed WebTorrent/HTTPS tracker timeouts on Android (`Metadata timeout after 30s`). The engine now automatically downloads and injects Mozilla's `cacert.pem` to bypass Android's restricted `/system/etc/security/cacerts` store, guaranteeing OpenSSL can verify tracker certificates.
 ## 1.9.0
 
 - Upgrade libtorrent engine to the stable `v2.1.0` release.

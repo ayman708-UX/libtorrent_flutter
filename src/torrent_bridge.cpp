@@ -1816,23 +1816,22 @@ static void preload_stream(StreamEngine* s, int64_t preload_bytes) {
 
 extern "C" {
 
+TORRENT_API void lt_set_ssl_cert_path(const char* path) {
+#ifdef __ANDROID__
+    if (path && *path) {
+        setenv("SSL_CERT_FILE", path, 1);
+        __android_log_print(ANDROID_LOG_INFO, "libtorrent_native", "SSL_CERT_FILE set to %s", path);
+    }
+#endif
+}
+
 TORRENT_API lt_session_t lt_create_session(const char* iface, int dl, int ul) {
     try {
 #ifdef __ANDROID__
         // ── Android SSL certificate fix ─────────────────────────────────────
-        // OpenSSL's SSL_CTX_set_default_verify_paths() probes standard Linux
-        // paths like /etc/ssl/certs/ which do NOT exist on Android.
-        // Without this, every HTTPS tracker, WSS WebTorrent tracker, and SSL
-        // connection fails certificate validation silently — causing metadata
-        // to never arrive and torrents to time out.
-        //
-        // Android stores its system CA certificates as individual PEM files
-        // in /system/etc/security/cacerts/ (hashed filenames).
-        // Setting SSL_CERT_DIR tells OpenSSL where to find them.
-        setenv("SSL_CERT_DIR", "/system/etc/security/cacerts", 1);
-
-        __android_log_print(ANDROID_LOG_INFO, "libtorrent_native",
-            "SSL_CERT_DIR set to /system/etc/security/cacerts");
+        // We now receive the cacert.pem path from Dart via lt_set_ssl_cert_path.
+        // But as a fallback, we also try setting the system dir.
+        setenv("SSL_CERT_DIR", "/system/etc/security/cacerts", 0); // 0 = don't overwrite if Dart set SSL_CERT_FILE
 #endif
 
         lt::settings_pack sp;
