@@ -1,6 +1,14 @@
 # Changelog
 
-## 1.8.14
+## 1.9.0
+
+- Upgrade libtorrent engine to the stable `v2.1.0` release.
+- WebTorrent support enabled by default (WebRTC peer connectivity).
+- New `pread_disk_io` backend for improved disk I/O performance.
+- Fixes for uTP use-after-free, WebRTC tracker bugs, and memory leaks.
+- Fixes for UDP socket binding, LSD staggering, and force-reannounce.
+
+
 
 - Update libtorrent engine to `v2.1.0-rc3` to include critical WebTorrent and WebRTC stability fixes (resolving tracker timeouts, WebRTC memory leaks, and DHT metadata issues on Android).
 ## 1.8.13
