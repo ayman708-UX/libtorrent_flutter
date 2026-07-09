@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 env:
-  LIBTORRENT_VERSION: "RC_2_1"
+  LIBTORRENT_VERSION: "v2.1.0-rc3"
 
 jobs:
   # ═══════════════════════════════════════════════════════════════════════════════
@@ -46,7 +46,6 @@ jobs:
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DBUILD_SHARED_LIBS=OFF \
             -Ddeprecated-functions=ON \
-            -Dwebtorrent=ON \
             -G Ninja -Wno-dev
           ninja -j$(nproc)
           echo "=== Static lib ==="
@@ -205,7 +204,6 @@ jobs:
                 -DBUILD_SHARED_LIBS=OFF \
                 -Ddeprecated-functions=ON \
                 -Dencryption=ON \
-                -Dwebtorrent=ON \
                 -DOPENSSL_ROOT_DIR="${ossl_root}" \
                 -DOPENSSL_INCLUDE_DIR="${ossl_root}/include" \
                 -DOPENSSL_CRYPTO_LIBRARY="${ossl_root}/lib/libcrypto.a" \
@@ -335,7 +333,6 @@ jobs:
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
             -DBUILD_SHARED_LIBS=OFF `
             -Ddeprecated-functions=ON `
-            -Dwebtorrent=ON `
             -Dencryption=ON `
             -DCMAKE_INSTALL_PREFIX="..\install"
           cmake --build . --config Release --target install
@@ -472,7 +469,6 @@ jobs:
             -Dstatic_runtime=ON \
             -Ddeprecated-functions=ON \
             -Dencryption=ON \
-            -Dwebtorrent=ON \
             -DOPENSSL_ROOT_DIR=$OPENSSL_ROOT \
             -DOPENSSL_INCLUDE_DIR=$OPENSSL_ROOT/include \
             -DOPENSSL_CRYPTO_LIBRARY=$OSSL_LIB_DIR/libcrypto.a \
@@ -626,7 +622,6 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             -Ddeprecated-functions=ON \
             -Dencryption=ON \
-            -Dwebtorrent=ON \
             -DOPENSSL_ROOT_DIR="$OSSL_ROOT" \
             -DOPENSSL_INCLUDE_DIR="$OSSL_ROOT/include" \
             -DOPENSSL_CRYPTO_LIBRARY="$OSSL_ROOT/lib/libcrypto.a" \

@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.8.14
+
+- Update libtorrent engine to `v2.1.0-rc3` to include critical WebTorrent and WebRTC stability fixes (resolving tracker timeouts, WebRTC memory leaks, and DHT metadata issues on Android).
 ## 1.8.13
 
 - Updated build script to compile against the `RC_2_1` branch of libtorrent to incorporate the latest upstream Android bug fixes.

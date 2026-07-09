@@ -1829,7 +1829,8 @@ TORRENT_API lt_session_t lt_create_session(const char* iface, int dl, int ul) {
             | lt::alert_category::peer
             | lt::alert_category::port_mapping
             | lt::alert_category::dht
-            | lt::alert_category::session_log);
+            | lt::alert_category::session_log
+            | lt::alert_category::debug);
 
         sp.set_str(lt::settings_pack::listen_interfaces,
             (iface && *iface) ? iface : "0.0.0.0:6881,[::]:6881");
