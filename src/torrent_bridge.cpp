@@ -23,6 +23,7 @@
 
 #ifdef __ANDROID__
 #include <android/log.h>
+#include <cstdlib>  // setenv() for SSL_CERT_DIR
 #endif
 
 #include <libtorrent/session.hpp>
@@ -1817,6 +1818,23 @@ extern "C" {
 
 TORRENT_API lt_session_t lt_create_session(const char* iface, int dl, int ul) {
     try {
+#ifdef __ANDROID__
+        // ── Android SSL certificate fix ─────────────────────────────────────
+        // OpenSSL's SSL_CTX_set_default_verify_paths() probes standard Linux
+        // paths like /etc/ssl/certs/ which do NOT exist on Android.
+        // Without this, every HTTPS tracker, WSS WebTorrent tracker, and SSL
+        // connection fails certificate validation silently — causing metadata
+        // to never arrive and torrents to time out.
+        //
+        // Android stores its system CA certificates as individual PEM files
+        // in /system/etc/security/cacerts/ (hashed filenames).
+        // Setting SSL_CERT_DIR tells OpenSSL where to find them.
+        setenv("SSL_CERT_DIR", "/system/etc/security/cacerts", 1);
+
+        __android_log_print(ANDROID_LOG_INFO, "libtorrent_native",
+            "SSL_CERT_DIR set to /system/etc/security/cacerts");
+#endif
+
         lt::settings_pack sp;
 
         // alert categories
