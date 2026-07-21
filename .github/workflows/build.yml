@@ -2,7 +2,7 @@ name: Build & Test Native Libraries
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, temp-build-*]
   pull_request:
     branches: [main, master]
   workflow_dispatch:

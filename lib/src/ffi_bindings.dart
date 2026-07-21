@@ -23,8 +23,6 @@ final class LtTorrentStatus extends Struct {
   @Int64()   external int totalUploaded;
   @Int32()   external int numPeers;
   @Int32()   external int numSeeds;
-  @Int32()   external int numPieces;
-  @Int32()   external int piecesDone;
   @Int32()   external int isPaused;
   @Int32()   external int isFinished;
   @Int32()   external int hasMetadata;

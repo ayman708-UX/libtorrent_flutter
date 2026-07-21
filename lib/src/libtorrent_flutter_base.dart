@@ -7,6 +7,8 @@ import 'dart:ffi';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/services.dart' show rootBundle;
+
 import 'package:ffi/ffi.dart';
 
 import 'ffi_bindings.dart';
@@ -169,13 +171,19 @@ class LibtorrentFlutter {
       try {
         final certFile = File('${Directory.systemTemp.path}/cacert.pem');
         if (!await certFile.exists()) {
-          final client = HttpClient();
-          final req = await client.getUrl(Uri.parse('https://curl.se/ca/cacert.pem'));
-          final res = await req.close();
-          if (res.statusCode == 200) {
-            await res.pipe(certFile.openWrite());
+          try {
+            final byteData = await rootBundle.load('packages/libtorrent_flutter/assets/cacert.pem');
+            await certFile.writeAsBytes(byteData.buffer.asUint8List(byteData.offsetInBytes, byteData.lengthInBytes));
+          } catch (e) {
+            print('Failed to load cacert from assets: $e');
+            final client = HttpClient();
+            final req = await client.getUrl(Uri.parse('https://curl.se/ca/cacert.pem'));
+            final res = await req.close();
+            if (res.statusCode == 200) {
+              await res.pipe(certFile.openWrite());
+            }
+            client.close(force: true);
           }
-          client.close(force: true);
         }
         if (await certFile.exists()) {
           final certPathPtr = certFile.path.toNativeUtf8();
@@ -467,8 +475,8 @@ class LibtorrentFlutter {
   static void _onAlert(int type, int torrentId, Pointer<Utf8> message, Pointer<Void> userData) {
     // Silently consume alerts — users can listen to torrentUpdates for state changes.
     // Uncomment for debugging:
-    // final msg = message.toDartString();
-    // print('LibtorrentFlutter Alert: [T$torrentId] $msg');
+    final msg = message.toDartString();
+    print('LibtorrentFlutter Alert: [T$torrentId] $msg');
   }
 
   void _pollTorrents() {
@@ -478,9 +486,12 @@ class LibtorrentFlutter {
       final n = _b.getAllStatuses(_session, buf, max(count, _maxTorrents));
       bool changed = false;
       final seen = <int>{};
-
       for (var i = 0; i < n; i++) {
-        final info = _toTorrentInfo(buf[i]);
+        final st = buf[i];
+        final info = _toTorrentInfo(st);
+        if (i == 0) {
+            print('DEBUG TINFO: id=${st.id} state=${st.state} numPeers=${st.numPeers} seeds=${st.numSeeds} qpos=${st.queuePosition} progress=${st.progress} rate=${st.downloadRate} tdone=${st.totalDone}');
+        }
         seen.add(info.id);
         final old = _torrents[info.id];
         if (old == null || _changed(old, info)) {
