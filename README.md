@@ -1,10 +1,10 @@
 # libtorrent_flutter
 
-The only Flutter package wrapping **libtorrent 2.1** (with WebTorrent support) — the same C++ engine powering qBittorrent, Deluge, and Transmission. Add a magnet link, pick a file, get a stream URL. Works on Windows, Linux, macOS, iOS, and Android — prebuilt native binaries are fetched on first build from the matching GitHub Release.
+The only Flutter package wrapping **libtorrent 2.1** — the same C++ engine powering qBittorrent, Deluge, and Transmission. Add a magnet link, pick a file, get a stream URL. Works on Windows, Linux, macOS, iOS, and Android — prebuilt native binaries are fetched on first build from the matching GitHub Release.
 
 ```yaml
 dependencies:
-  libtorrent_flutter: ^1.9.1
+  libtorrent_flutter: ^1.9.2
 ```
 
 > **First build downloads ~10–80 MB of native binaries** from the matching
@@ -225,7 +225,7 @@ given libtorrent + OpenSSL + Boost on the host.
 
 ## How it works
 
-A single C++ file (`torrent_bridge.cpp`) wraps libtorrent 2.1 and compiles to a native static/shared library on every platform. Dart talks to it via FFI — no platform channels, no Kotlin, no Swift.
+A single C++ file (`torrent_bridge.cpp`) wraps libtorrent 2.0 and compiles to a native static/shared library on every platform. Dart talks to it via FFI — no platform channels, no Kotlin, no Swift.
 
 When you call `startStream()`:
 1. The engine estimates media bitrate from file size and computes an adaptive startup piece count (1–5 pieces instead of a fixed number) — large files start faster because fewer pieces need to arrive before the player can begin

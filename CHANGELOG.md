@@ -1,34 +1,37 @@
 # Changelog
 
-## 1.9.1
+## 1.9.2
 
-- **CRITICAL FIX**: Fixed WebTorrent/HTTPS tracker timeouts on Android (`Metadata timeout after 30s`). The engine now automatically downloads and injects Mozilla's `cacert.pem` to bypass Android's restricted `/system/etc/security/cacerts` store, guaranteeing OpenSSL can verify tracker certificates.
-## 1.9.0
+- **BREAKING: Upgrade to libtorrent 2.1.0 with WebTorrent support.**
+  The underlying libtorrent library has been upgraded from 2.0.11 to 2.1.0.
+  This is a major version bump for the plugin because the native binary ABI
+  has changed — all prebuilt libraries must be rebuilt from this version.
 
-- Upgrade libtorrent engine to the stable `v2.1.0` release.
-- WebTorrent support enabled by default (WebRTC peer connectivity).
-- New `pread_disk_io` backend for improved disk I/O performance.
-- Fixes for uTP use-after-free, WebRTC tracker bugs, and memory leaks.
-- Fixes for UDP socket binding, LSD staggering, and force-reannounce.
+- **WebTorrent (WebRTC) peer connectivity enabled by default.**
+  libtorrent 2.1.0 introduces native WebTorrent support, allowing peers
+  to connect via WebRTC data channels through WebSocket trackers
+  (e.g. `wss://tracker.btorrent.xyz`). This enables connectivity with
+  browser-based torrent clients. New dependencies: libdatachannel
+  (WebRTC), libjuice (ICE/STUN), libusrsctp (SCTP), Boost.JSON.
+  New `BtConfig.enableWebtorrent` field (default: true).
 
+- **Android SSL certificate fix for WebTorrent.**
+  libtorrent's SSL certificate loading has code paths for Windows (system
+  cert store), macOS (`/etc/ssl/cert.pem`), and Linux
+  (`/etc/ssl/certs/ca-certificates.crt`), but NO code path for Android.
+  This caused all HTTPS/WSS tracker connections to fail silently on
+  Android. Fixed by bundling Mozilla's CA certificate bundle
+  (`cacert.pem` ~186KB) as a Flutter asset and setting the `SSL_CERT_FILE`
+  environment variable before session creation. New native API:
+  `lt_set_ssl_cert_file()`.
 
+- **Boost upgraded from 1.84.0 to 1.87.0** (CI builds only, header-only).
+  Required for Boost.JSON dependency added by WebTorrent support.
 
-- Update libtorrent engine to `v2.1.0-rc3` to include critical WebTorrent and WebRTC stability fixes (resolving tracker timeouts, WebRTC memory leaks, and DHT metadata issues on Android).
-## 1.8.13
-
-- Updated build script to compile against the `RC_2_1` branch of libtorrent to incorporate the latest upstream Android bug fixes.
-
-## 1.8.8
-
-- Fix Android ABI mismatch causing native crashes due to mixing C++ STL implementations.
-
-## 1.8.7
-
-- Fix iOS Xcode undefined symbol errors by safely merging WebRTC and OpenSSL static libraries.
-
-## 1.8.6
-
-- WebTorrent support added
+- **New default disk I/O backend (`pread_disk_io`).** libtorrent 2.1.0
+  replaces the mmap-based disk backend with `pread_disk_io` by default,
+  improving performance on spinning disks and network mounts. This is a
+  transparent change — no API differences.
 
 ## 1.8.5
 

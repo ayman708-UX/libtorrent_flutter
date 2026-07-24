@@ -106,6 +106,9 @@ typedef struct {
 
     /* Reader */
     int32_t responsive_mode;         /* 1=enabled (default), 0=disabled */
+
+    /* WebTorrent (libtorrent 2.1+) */
+    int32_t enable_webtorrent;       /* 1=enabled (default), 0=disabled */
 } lt_bt_config;
 
 typedef void (*lt_alert_callback)(int alert_type, lt_torrent_id id,
@@ -183,6 +186,9 @@ TORRENT_API void lt_set_cache_settings(lt_session_t session, lt_stream_id id,
 /* speed limits */
 TORRENT_API void lt_set_download_limit(lt_session_t session, int bytes_per_sec);
 TORRENT_API void lt_set_upload_limit(lt_session_t session, int bytes_per_sec);
+
+/* SSL certificate loading (Android: call before lt_create_session) */
+TORRENT_API void lt_set_ssl_cert_file(const char* cert_file_path);
 
 /* utility */
 TORRENT_API const char* lt_last_error(void);

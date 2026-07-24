@@ -1,4 +1,4 @@
-// torrent_bridge.cpp — libtorrent 2.0 streaming engine
+// torrent_bridge.cpp — libtorrent 2.1 streaming engine (WebTorrent enabled)
 // TorrServer-grade streaming: function-by-function C++ port of TorrServer's Go code
 // Cross-platform: Windows, Linux, macOS, Android, iOS
 //
@@ -20,11 +20,6 @@
 #endif
 
 #include "torrent_bridge.h"
-
-#ifdef __ANDROID__
-#include <android/log.h>
-#include <cstdlib>  // setenv() for SSL_CERT_DIR
-#endif
 
 #include <libtorrent/session.hpp>
 #include <libtorrent/settings_pack.hpp>
@@ -84,6 +79,11 @@
 #include <cinttypes>
 #include <functional>
 #include <cstdio>
+
+// ── Android SSL cert path via environment variable ──────────────────────────────
+#ifdef __ANDROID__
+  #include <cstdlib>  // setenv
+#endif
 
 namespace lt  = libtorrent;
 namespace chr = std::chrono;
@@ -990,6 +990,7 @@ struct SessionWrapper {
         bt_config.upload_rate_limit = 0;                // unlimited
         bt_config.peers_listen_port = 0;                // random
         bt_config.responsive_mode = 1;                  // enabled by default
+        bt_config.enable_webtorrent = 1;                  // enabled by default (libtorrent 2.1+)
     }
 
     int64_t id_for_handle(const lt::torrent_handle& h) {
@@ -1069,7 +1070,7 @@ struct SessionWrapper {
                                 try {
                                     auto ti = mra->handle.torrent_file();
                                     if (ti) {
-                                        int nf = ti->num_files();
+                                        int nf = ti->files().num_files();
                                         std::vector<lt::download_priority_t> p(
                                             (size_t)nf, lt::dont_download);
                                         mra->handle.prioritize_files(p);
@@ -1089,10 +1090,6 @@ struct SessionWrapper {
                             if (dart_queue.size() < 2048)
                                 dart_queue.push_back({a->type(), tid, a->message()});
                         }
-
-#ifdef __ANDROID__
-                        __android_log_print(ANDROID_LOG_DEBUG, "libtorrent_native", "%s", a->message().c_str());
-#endif
 
                         {
                             std::lock_guard<std::mutex> cl(cb_mu);
@@ -1587,7 +1584,7 @@ static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
             // get filename — port of stream.go MIME detection
             std::string filename = "video.mp4";
             if (s->ti) {
-                try { filename = std::string(s->ti->orig_files().file_name(lt::file_index_t{s->file_index})); }
+                try { filename = s->ti->files().file_name(lt::file_index_t{s->file_index}).to_string(); }
                 catch (...) {}
             }
 
@@ -1816,24 +1813,8 @@ static void preload_stream(StreamEngine* s, int64_t preload_bytes) {
 
 extern "C" {
 
-TORRENT_API void lt_set_ssl_cert_path(const char* path) {
-#ifdef __ANDROID__
-    if (path && *path) {
-        setenv("SSL_CERT_FILE", path, 1);
-        __android_log_print(ANDROID_LOG_INFO, "libtorrent_native", "SSL_CERT_FILE set to %s", path);
-    }
-#endif
-}
-
 TORRENT_API lt_session_t lt_create_session(const char* iface, int dl, int ul) {
     try {
-#ifdef __ANDROID__
-        // ── Android SSL certificate fix ─────────────────────────────────────
-        // We now receive the cacert.pem path from Dart via lt_set_ssl_cert_path.
-        // But as a fallback, we also try setting the system dir.
-        setenv("SSL_CERT_DIR", "/system/etc/security/cacerts", 0); // 0 = don't overwrite if Dart set SSL_CERT_FILE
-#endif
-
         lt::settings_pack sp;
 
         // alert categories
@@ -1841,12 +1822,7 @@ TORRENT_API lt_session_t lt_create_session(const char* iface, int dl, int ul) {
             lt::alert_category::status
             | lt::alert_category::error
             | lt::alert_category::storage
-            | lt::alert_category::piece_progress
-            | lt::alert_category::tracker
-            | lt::alert_category::peer
-            | lt::alert_category::port_mapping
-            | lt::alert_category::dht
-            | lt::alert_category::session_log);
+            | lt::alert_category::piece_progress);
 
         sp.set_str(lt::settings_pack::listen_interfaces,
             (iface && *iface) ? iface : "0.0.0.0:6881,[::]:6881");
@@ -2248,14 +2224,14 @@ TORRENT_API int lt_get_files(lt_session_t session, lt_torrent_id id,
     try {
         auto ti = it->second.torrent_file();
         if (!ti) return 0;
-        const lt::file_storage& fs = ti->orig_files();
+        const lt::file_storage& fs = ti->files();
         int n = 0;
         for (int i = 0; i < fs.num_files() && n < max; ++i, ++n) {
             lt::file_index_t fi{i};
             out[n].index = i;
             out[n].size  = fs.file_size(fi);
-            out[n].is_streamable = is_streamable(std::string(fs.file_name(fi))) ? 1 : 0;
-            std::string nm(fs.file_name(fi));
+            out[n].is_streamable = is_streamable(fs.file_name(fi).to_string()) ? 1 : 0;
+            std::string nm = fs.file_name(fi).to_string();
             std::string pt = fs.file_path(fi);
             std::strncpy(out[n].name, nm.c_str(), sizeof(out[n].name) - 1);
             std::strncpy(out[n].path, pt.c_str(), sizeof(out[n].path) - 1);
@@ -2276,7 +2252,7 @@ TORRENT_API void lt_set_file_priorities(lt_session_t session, lt_torrent_id id,
     try {
         auto ti = it->second.torrent_file();
         if (!ti) return;
-        int nf = ti->num_files();
+        int nf = ti->files().num_files();
         std::vector<lt::download_priority_t> p;
         p.reserve(nf);
         for (int i = 0; i < nf; ++i)
@@ -2307,14 +2283,14 @@ TORRENT_API lt_stream_id lt_start_stream(lt_session_t session,
 
     auto ti = handle.torrent_file();
     if (!ti) { set_err("no metadata yet"); return -1; }
-    const lt::file_storage& fs = ti->orig_files();
+    const lt::file_storage& fs = ti->files();
 
     // auto-select largest streamable file
     if (file_index < 0) {
         int64_t best = -1; file_index = 0;
         for (int i = 0; i < fs.num_files(); ++i) {
             int64_t sz = fs.file_size(lt::file_index_t{i});
-            if (sz > best && is_streamable(std::string(fs.file_name(lt::file_index_t{i})))) {
+            if (sz > best && is_streamable(fs.file_name(lt::file_index_t{i}).to_string())) {
                 best = sz; file_index = i;
             }
         }
@@ -2540,7 +2516,7 @@ TORRENT_API void lt_stop_stream(lt_session_t session, lt_stream_id sid) {
         try {
             auto ti2 = stream->handle.torrent_file();
             if (ti2) {
-                int nf = ti2->num_files();
+                int nf = ti2->files().num_files();
                 std::vector<lt::download_priority_t> p((size_t)nf, lt::default_priority);
                 stream->handle.prioritize_files(p);
             }
@@ -2642,6 +2618,36 @@ TORRENT_API void lt_set_upload_limit(lt_session_t session, int bps) {
 
 TORRENT_API const char* lt_last_error(void) { return g_last_error.c_str(); }
 TORRENT_API const char* lt_version(void)    { return LIBTORRENT_VERSION; }
+
+// ── SSL certificate loading ─────────────────────────────────────────────────────
+// On Android, OpenSSL's SSL_CTX_set_default_verify_paths() fails because the NDK
+// doesn't know where Android keeps its CA certificates. libtorrent v2.1.0's
+// session_impl.cpp has cert loading for Windows (cert store), macOS (/etc/ssl/cert.pem),
+// and Linux (/etc/ssl/certs/), but NO code path for Android.
+//
+// The fix: set the SSL_CERT_FILE environment variable BEFORE creating the session.
+// OpenSSL's set_default_verify_paths() checks this env var first and uses it if set.
+// This is the same approach used by curl, Python, and many other Android NDK apps.
+//
+// The Dart layer should:
+//   1. Bundle cacert.pem (Mozilla CA bundle) as a Flutter asset
+//   2. On Android, extract it to the app's files directory
+//   3. Call lt_set_ssl_cert_file(path) before lt_create_session()
+
+TORRENT_API void lt_set_ssl_cert_file(const char* cert_file_path) {
+    if (!cert_file_path || !*cert_file_path) return;
+#ifdef __ANDROID__
+    setenv("SSL_CERT_FILE", cert_file_path, 1);
+    TB_LOG("SSL_CERT_FILE set to: %s", cert_file_path);
+#elif defined(__linux__)
+    // On Linux, libtorrent handles this natively, but allow override
+    setenv("SSL_CERT_FILE", cert_file_path, 1);
+#else
+    // Windows/macOS/iOS: libtorrent uses OS certificate stores natively.
+    // This function is a no-op but we accept the call gracefully.
+    (void)cert_file_path;
+#endif
+}
 
 // ── preload — port of torr/preload.go ───────────────────────────────────────────
 
@@ -2749,11 +2755,6 @@ TORRENT_API void lt_configure_session(lt_session_t session,
     // port of: bt.config.NoDHT = settings.BTsets.DisableDHT
     sp.set_bool(lt::settings_pack::enable_dht, !cfg.disable_dht);
 
-#ifdef __ANDROID__
-    // Disable HTTPS tracker validation on Android to fix WebTorrent wss:// timeouts
-    sp.set_bool(lt::settings_pack::validate_https_trackers, false);
-#endif
-
     // port of: bt.config.NoUpload = settings.BTsets.DisableUpload
     if (cfg.disable_upload) {
         sp.set_int(lt::settings_pack::upload_rate_limit, 1); // near-zero upload
@@ -2838,6 +2839,7 @@ TORRENT_API void lt_get_default_config(lt_bt_config* out) {
     out->upload_rate_limit = 0;
     out->peers_listen_port = 0;
     out->responsive_mode = 1;
+    out->enable_webtorrent = 1;
 }
 
 // port of stream.go GetActiveStreams()

@@ -26,7 +26,6 @@ add_library(libtorrent_flutter SHARED
 
 target_compile_definitions(libtorrent_flutter PRIVATE
     TORRENT_BRIDGE_EXPORTS
-    TORRENT_USE_OPENSSL
 )
 
 # TORRENT_NO_DEPRECATE changes ABI version (v2:: namespace).
