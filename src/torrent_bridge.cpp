@@ -31,6 +31,12 @@
 #include <libtorrent/magnet_uri.hpp>
 #include <libtorrent/error_code.hpp>
 #include <libtorrent/version.hpp>
+
+#if LIBTORRENT_VERSION_NUM >= 20100
+#define TI_FILES(ti_ptr) (ti_ptr)->layout()
+#else
+#define TI_FILES(ti_ptr) (ti_ptr)->files()
+#endif
 #include <libtorrent/file_storage.hpp>
 #include <libtorrent/download_priority.hpp>
 
@@ -1070,7 +1076,7 @@ struct SessionWrapper {
                                 try {
                                     auto ti = mra->handle.torrent_file();
                                     if (ti) {
-                                        int nf = ti->layout().num_files();
+                                        int nf = TI_FILES(ti).num_files();
                                         std::vector<lt::download_priority_t> p(
                                             (size_t)nf, lt::dont_download);
                                         mra->handle.prioritize_files(p);
@@ -1584,7 +1590,7 @@ static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
             // get filename — port of stream.go MIME detection
             std::string filename = "video.mp4";
             if (s->ti) {
-                try { filename = std::string(s->ti->layout().file_name(lt::file_index_t{s->file_index})); }
+                try { filename = std::string(TI_FILES(s->ti).file_name(lt::file_index_t{s->file_index})); }
                 catch (...) {}
             }
 
@@ -2224,7 +2230,7 @@ TORRENT_API int lt_get_files(lt_session_t session, lt_torrent_id id,
     try {
         auto ti = it->second.torrent_file();
         if (!ti) return 0;
-        const lt::file_storage& fs = ti->layout();
+        const lt::file_storage& fs = TI_FILES(ti);
         int n = 0;
         for (int i = 0; i < fs.num_files() && n < max; ++i, ++n) {
             lt::file_index_t fi{i};
@@ -2252,7 +2258,7 @@ TORRENT_API void lt_set_file_priorities(lt_session_t session, lt_torrent_id id,
     try {
         auto ti = it->second.torrent_file();
         if (!ti) return;
-        int nf = ti->layout().num_files();
+        int nf = TI_FILES(ti).num_files();
         std::vector<lt::download_priority_t> p;
         p.reserve(nf);
         for (int i = 0; i < nf; ++i)
@@ -2283,7 +2289,7 @@ TORRENT_API lt_stream_id lt_start_stream(lt_session_t session,
 
     auto ti = handle.torrent_file();
     if (!ti) { set_err("no metadata yet"); return -1; }
-    const lt::file_storage& fs = ti->layout();
+    const lt::file_storage& fs = TI_FILES(ti);
 
     // auto-select largest streamable file
     if (file_index < 0) {
@@ -2516,7 +2522,7 @@ TORRENT_API void lt_stop_stream(lt_session_t session, lt_stream_id sid) {
         try {
             auto ti2 = stream->handle.torrent_file();
             if (ti2) {
-                int nf = ti2->layout().num_files();
+                int nf = TI_FILES(ti2).num_files();
                 std::vector<lt::download_priority_t> p((size_t)nf, lt::default_priority);
                 stream->handle.prioritize_files(p);
             }
