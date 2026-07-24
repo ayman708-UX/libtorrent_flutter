@@ -345,9 +345,13 @@ jobs:
           C:\vcpkg\bootstrap-vcpkg.bat
           echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
-      - name: Install libtorrent via vcpkg (static, ${{ matrix.triplet }})
-        run: C:\vcpkg\vcpkg.exe install libtorrent:${{ matrix.triplet }}
+      - name: Install dependencies via vcpkg (static, ${{ matrix.triplet }})
+        run: C:\vcpkg\vcpkg.exe install openssl:${{ matrix.triplet }} boost:${{ matrix.triplet }}
         timeout-minutes: 90
+
+      - name: Clone libtorrent
+        run: |
+          git clone --depth 1 --branch v${{ env.LIBTORRENT_VERSION }} --recurse-submodules https://github.com/arvidn/libtorrent.git libtorrent-src
 
       - name: Build native library
         run: |
@@ -358,7 +362,15 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE="C:\vcpkg\scripts\buildsystems\vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} `
-            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -Dwebtorrent=ON `
+            -Dencryption=ON `
+            -DBUILD_SHARED_LIBS=OFF `
+            -Dbuild_tests=OFF `
+            -Dbuild_examples=OFF `
+            -Dbuild_tools=OFF `
+            -Ddeprecated-functions=ON `
+            -Dstatic_runtime=ON
           cmake --build . --config Release
 
       - name: Copy to prebuilt
