@@ -727,6 +727,7 @@ jobs:
             build-ios-arm64/webrtc_objects/*.o \
             build-ios-arm64/ssl_objects/*.o
 
+          strip -S build-ios-arm64/liblibtorrent_flutter.a
           ls -la build-ios-arm64/liblibtorrent_flutter.a
           echo "✅ iOS arm64 static build (encryption ON) succeeded"
 
@@ -811,6 +812,7 @@ jobs:
             build-ios-sim-x86_64/webrtc_objects/*.o \
             build-ios-sim-x86_64/ssl_objects/*.o
 
+          strip -S build-ios-sim-x86_64/liblibtorrent_flutter.a
           ls -la build-ios-sim-x86_64/liblibtorrent_flutter.a
           echo "✅ iOS Simulator x86_64 (encryption ON) succeeded"
 
@@ -895,6 +897,7 @@ jobs:
             build-ios-sim-arm64/webrtc_objects/*.o \
             build-ios-sim-arm64/ssl_objects/*.o
 
+          strip -S build-ios-sim-arm64/liblibtorrent_flutter.a
           ls -la build-ios-sim-arm64/liblibtorrent_flutter.a
           echo "✅ iOS Simulator arm64 (encryption ON) succeeded"
 
