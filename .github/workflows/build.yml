@@ -237,13 +237,18 @@ jobs:
             lt_lib=$(find "${slice_dir}" -name "libtorrent-rasterbar.a" | head -1)
             echo "libtorrent ${arch}: $lt_lib"
 
-            local webrtc_link_flags=""
+            local webrtc_libs=""
             for lib in datachannel-static datachannel juice-static juice usrsctp-static usrsctp srtp2; do
               local found
               found=$(find "${slice_dir}" -name "lib${lib}.a" 2>/dev/null | head -1)
               if [ -n "$found" ]; then
-                webrtc_link_flags="$webrtc_link_flags -Wl,-force_load,\"$found\""
+                webrtc_libs="$webrtc_libs $found"
               fi
+            done
+
+            local webrtc_link_flags=""
+            for wlib in $webrtc_libs; do
+              webrtc_link_flags="${webrtc_link_flags} -Wl,-force_load,${wlib}"
             done
 
             local out_dir="$PWD/build-macos-${arch}"
@@ -476,6 +481,7 @@ jobs:
             -Dencryption=ON \
             -Dwebtorrent=ON \
             -DBoost_NO_BOOST_CMAKE=ON \
+            -DCMAKE_CXX_FLAGS="-DBOOST_ALL_NO_EMBEDDED_GDB_SCRIPTS=1" \
             -DOPENSSL_ROOT_DIR=$OPENSSL_ROOT \
             -DOPENSSL_INCLUDE_DIR=$OPENSSL_ROOT/include \
             -DOPENSSL_CRYPTO_LIBRARY=$OSSL_LIB_DIR/libcrypto.a \
@@ -539,6 +545,7 @@ jobs:
             -DTORRENT_USE_OPENSSL \
             -DTORRENT_USE_LIBCRYPTO \
             -DBOOST_NO_IOSTREAM \
+            -DBOOST_ALL_NO_EMBEDDED_GDB_SCRIPTS=1 \
             -I$LT_SRC_DIR/include \
             -I$LT_BUILD_DIR/include \
             -I$BOOST_ROOT \
