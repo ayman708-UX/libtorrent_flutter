@@ -1,6 +1,6 @@
 # libtorrent_flutter
 
-The only Flutter package wrapping **libtorrent 2.1** — the same C++ engine powering qBittorrent, Deluge, and Transmission. Add a magnet link, pick a file, get a stream URL. Works on Windows, Linux, macOS, iOS, and Android — prebuilt native binaries are fetched on first build from the matching GitHub Release.
+The only Flutter package wrapping **libtorrent 2.0** — the same C++ engine powering qBittorrent, Deluge, and Transmission. Add a magnet link, pick a file, get a stream URL. Works on Windows, Linux, macOS, iOS, and Android — prebuilt native binaries are fetched on first build from the matching GitHub Release.
 
 ```yaml
 dependencies:
@@ -18,7 +18,7 @@ dependencies:
 
 ## Why libtorrent?
 
-Every other Flutter torrent package uses either a Java wrapper (Android-only) or a pure-Dart implementation that can't compete on speed. libtorrent 2.1 gives you:
+Every other Flutter torrent package uses either a Java wrapper (Android-only) or a pure-Dart implementation that can't compete on speed. libtorrent 2.0 gives you:
 
 - **`set_piece_deadline`** — tells the engine "I need this piece in 150ms", and it picks the fastest peer automatically. Far smarter than simple sequential download.
 - **uTP support** — connects to peers behind NAT that other clients can't reach.

@@ -2,36 +2,7 @@
 
 ## 1.9.2
 
-- **BREAKING: Upgrade to libtorrent 2.1.0 with WebTorrent support.**
-  The underlying libtorrent library has been upgraded from 2.0.11 to 2.1.0.
-  This is a major version bump for the plugin because the native binary ABI
-  has changed — all prebuilt libraries must be rebuilt from this version.
-
-- **WebTorrent (WebRTC) peer connectivity enabled by default.**
-  libtorrent 2.1.0 introduces native WebTorrent support, allowing peers
-  to connect via WebRTC data channels through WebSocket trackers
-  (e.g. `wss://tracker.btorrent.xyz`). This enables connectivity with
-  browser-based torrent clients. New dependencies: libdatachannel
-  (WebRTC), libjuice (ICE/STUN), libusrsctp (SCTP), Boost.JSON.
-  New `BtConfig.enableWebtorrent` field (default: true).
-
-- **Android SSL certificate fix for WebTorrent.**
-  libtorrent's SSL certificate loading has code paths for Windows (system
-  cert store), macOS (`/etc/ssl/cert.pem`), and Linux
-  (`/etc/ssl/certs/ca-certificates.crt`), but NO code path for Android.
-  This caused all HTTPS/WSS tracker connections to fail silently on
-  Android. Fixed by bundling Mozilla's CA certificate bundle
-  (`cacert.pem` ~186KB) as a Flutter asset and setting the `SSL_CERT_FILE`
-  environment variable before session creation. New native API:
-  `lt_set_ssl_cert_file()`.
-
-- **Boost upgraded from 1.84.0 to 1.87.0** (CI builds only, header-only).
-  Required for Boost.JSON dependency added by WebTorrent support.
-
-- **New default disk I/O backend (`pread_disk_io`).** libtorrent 2.1.0
-  replaces the mmap-based disk backend with `pread_disk_io` by default,
-  improving performance on spinning disks and network mounts. This is a
-  transparent change — no API differences.
+- Reverted to stable libtorrent 1.8.5 baseline (stability and CI fixes).
 
 ## 1.8.5
 
