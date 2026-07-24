@@ -32,9 +32,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libboost-all-dev libssl-dev \
+            libssl-dev \
             cmake g++ ninja-build pkg-config \
             libgtk-3-dev xvfb
+          wget -q https://archives.boost.io/release/1.87.0/source/boost_1_87_0.tar.gz
+          tar xf boost_1_87_0.tar.gz
+          echo "BOOST_ROOT=$PWD/boost_1_87_0" >> $GITHUB_ENV
 
       - name: Build libtorrent (static)
         run: |
@@ -48,6 +51,8 @@ jobs:
             -Ddeprecated-functions=ON \
             -Dwebtorrent=ON \
             -DBoost_NO_BOOST_CMAKE=ON \
+            -DBOOST_ROOT="${BOOST_ROOT}" \
+            -DBoost_INCLUDE_DIR="${BOOST_ROOT}" \
             -G Ninja -Wno-dev
           ninja -j$(nproc)
           echo "=== Static lib ==="
@@ -85,8 +90,11 @@ jobs:
           mkdir -p build-linux
           g++ -shared -fPIC -O2 -std=c++17 \
             -DTORRENT_BRIDGE_EXPORTS \
+            -DTORRENT_USE_OPENSSL \
+            -DTORRENT_USE_LIBCRYPTO \
             -Ilibtorrent-src/include \
             -Ilibtorrent-src/build/include \
+            -I${BOOST_ROOT} \
             -o build-linux/liblibtorrent_flutter.so \
             src/torrent_bridge.cpp \
             -Wl,--whole-archive "$LT_LIB" $WEBRTC_LIBS -Wl,--no-whole-archive \
@@ -211,12 +219,14 @@ jobs:
                 -DCMAKE_OSX_SYSROOT=${sdk} \
                 -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
                 -DBUILD_SHARED_LIBS=OFF \
-                -Ddeprecated-functions=OFF \
+                -Ddeprecated-functions=ON \
                 -Dencryption=ON \
                 -Dwebtorrent=ON \
                 -DBoost_NO_BOOST_CMAKE=ON \
                 -DOPENSSL_ROOT_DIR="${ossl_root}" \
-                -DOPENSSL_USE_STATIC_LIBS=ON \
+                -DOPENSSL_INCLUDE_DIR="${ossl_root}/include" \
+                -DOPENSSL_CRYPTO_LIBRARY="${ossl_root}/lib/libcrypto.a" \
+                -DOPENSSL_SSL_LIBRARY="${ossl_root}/lib/libssl.a" \
                 -DBOOST_ROOT="${BOOST_ROOT}" \
                 -DBoost_INCLUDE_DIR="${BOOST_ROOT}" \
                 -G Ninja -Wno-dev
@@ -244,7 +254,8 @@ jobs:
               -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET} \
               -isysroot ${sdk} \
               -DTORRENT_BRIDGE_EXPORTS \
-              -DTORRENT_NO_DEPRECATE \
+              -DTORRENT_USE_OPENSSL \
+              -DTORRENT_USE_LIBCRYPTO \
               -Ilibtorrent-src/include \
               -I${slice_dir}/include \
               -I${BOOST_ROOT} \
@@ -461,7 +472,7 @@ jobs:
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DBUILD_SHARED_LIBS=OFF \
             -Dstatic_runtime=ON \
-            -Ddeprecated-functions=OFF \
+            -Ddeprecated-functions=ON \
             -Dencryption=ON \
             -Dwebtorrent=ON \
             -DBoost_NO_BOOST_CMAKE=ON \
@@ -525,7 +536,8 @@ jobs:
             -shared -fPIC -O3 -std=c++17 \
             -flto \
             -DTORRENT_BRIDGE_EXPORTS \
-            -DTORRENT_NO_DEPRECATE \
+            -DTORRENT_USE_OPENSSL \
+            -DTORRENT_USE_LIBCRYPTO \
             -DBOOST_NO_IOSTREAM \
             -I$LT_SRC_DIR/include \
             -I$LT_BUILD_DIR/include \
@@ -628,12 +640,14 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DBUILD_SHARED_LIBS=OFF \
-            -Ddeprecated-functions=OFF \
+            -Ddeprecated-functions=ON \
             -Dencryption=ON \
             -Dwebtorrent=ON \
             -DBoost_NO_BOOST_CMAKE=ON \
             -DOPENSSL_ROOT_DIR="$OSSL_ROOT" \
-            -DOPENSSL_USE_STATIC_LIBS=ON \
+            -DOPENSSL_INCLUDE_DIR="$OSSL_ROOT/include" \
+            -DOPENSSL_CRYPTO_LIBRARY="$OSSL_ROOT/lib/libcrypto.a" \
+            -DOPENSSL_SSL_LIBRARY="$OSSL_ROOT/lib/libssl.a" \
             -DBOOST_ROOT=$(brew --prefix boost) \
             -DBoost_INCLUDE_DIR=$(brew --prefix boost)/include \
             -G Ninja -Wno-dev
@@ -670,7 +684,8 @@ jobs:
             -target arm64-apple-ios13.0 \
             -isysroot $IOS_SDK \
             -DTORRENT_BRIDGE_EXPORTS \
-            -DTORRENT_NO_DEPRECATE \
+            -DTORRENT_USE_OPENSSL \
+            -DTORRENT_USE_LIBCRYPTO \
             -DBOOST_NO_IOSTREAM \
             -Ilibtorrent-src/include \
             -Ilibtorrent-src/build-ios/include \
@@ -722,12 +737,14 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DBUILD_SHARED_LIBS=OFF \
-            -Ddeprecated-functions=OFF \
+            -Ddeprecated-functions=ON \
             -Dencryption=ON \
             -Dwebtorrent=ON \
             -DBoost_NO_BOOST_CMAKE=ON \
             -DOPENSSL_ROOT_DIR="$OSSL_ROOT" \
-            -DOPENSSL_USE_STATIC_LIBS=ON \
+            -DOPENSSL_INCLUDE_DIR="$OSSL_ROOT/include" \
+            -DOPENSSL_CRYPTO_LIBRARY="$OSSL_ROOT/lib/libcrypto.a" \
+            -DOPENSSL_SSL_LIBRARY="$OSSL_ROOT/lib/libssl.a" \
             -DBOOST_ROOT=$(brew --prefix boost) \
             -DBoost_INCLUDE_DIR=$(brew --prefix boost)/include \
             -G Ninja -Wno-dev
@@ -755,7 +772,8 @@ jobs:
             -target x86_64-apple-ios13.0-simulator \
             -isysroot $SIM_SDK \
             -DTORRENT_BRIDGE_EXPORTS \
-            -DTORRENT_NO_DEPRECATE \
+            -DTORRENT_USE_OPENSSL \
+            -DTORRENT_USE_LIBCRYPTO \
             -DBOOST_NO_IOSTREAM \
             -Ilibtorrent-src/include \
             -Ilibtorrent-src/build-sim-x86_64/include \
@@ -803,12 +821,14 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DBUILD_SHARED_LIBS=OFF \
-            -Ddeprecated-functions=OFF \
+            -Ddeprecated-functions=ON \
             -Dencryption=ON \
             -Dwebtorrent=ON \
             -DBoost_NO_BOOST_CMAKE=ON \
             -DOPENSSL_ROOT_DIR="$OSSL_ROOT" \
-            -DOPENSSL_USE_STATIC_LIBS=ON \
+            -DOPENSSL_INCLUDE_DIR="$OSSL_ROOT/include" \
+            -DOPENSSL_CRYPTO_LIBRARY="$OSSL_ROOT/lib/libcrypto.a" \
+            -DOPENSSL_SSL_LIBRARY="$OSSL_ROOT/lib/libssl.a" \
             -DBOOST_ROOT=$(brew --prefix boost) \
             -DBoost_INCLUDE_DIR=$(brew --prefix boost)/include \
             -G Ninja -Wno-dev
@@ -836,7 +856,8 @@ jobs:
             -target arm64-apple-ios13.0-simulator \
             -isysroot $SIM_SDK \
             -DTORRENT_BRIDGE_EXPORTS \
-            -DTORRENT_NO_DEPRECATE \
+            -DTORRENT_USE_OPENSSL \
+            -DTORRENT_USE_LIBCRYPTO \
             -DBOOST_NO_IOSTREAM \
             -Ilibtorrent-src/include \
             -Ilibtorrent-src/build-sim-arm64/include \

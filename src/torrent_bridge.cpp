@@ -1584,7 +1584,7 @@ static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
             // get filename — port of stream.go MIME detection
             std::string filename = "video.mp4";
             if (s->ti) {
-                try { filename = s->ti->files().file_name(lt::file_index_t{s->file_index}).to_string(); }
+                try { filename = std::string(s->ti->files().file_name(lt::file_index_t{s->file_index})); }
                 catch (...) {}
             }
 
@@ -2230,8 +2230,8 @@ TORRENT_API int lt_get_files(lt_session_t session, lt_torrent_id id,
             lt::file_index_t fi{i};
             out[n].index = i;
             out[n].size  = fs.file_size(fi);
-            out[n].is_streamable = is_streamable(fs.file_name(fi).to_string()) ? 1 : 0;
-            std::string nm = fs.file_name(fi).to_string();
+            out[n].is_streamable = is_streamable(std::string(fs.file_name(fi))) ? 1 : 0;
+            std::string nm = std::string(fs.file_name(fi));
             std::string pt = fs.file_path(fi);
             std::strncpy(out[n].name, nm.c_str(), sizeof(out[n].name) - 1);
             std::strncpy(out[n].path, pt.c_str(), sizeof(out[n].path) - 1);
@@ -2290,7 +2290,7 @@ TORRENT_API lt_stream_id lt_start_stream(lt_session_t session,
         int64_t best = -1; file_index = 0;
         for (int i = 0; i < fs.num_files(); ++i) {
             int64_t sz = fs.file_size(lt::file_index_t{i});
-            if (sz > best && is_streamable(fs.file_name(lt::file_index_t{i}).to_string())) {
+            if (sz > best && is_streamable(std::string(fs.file_name(lt::file_index_t{i})))) {
                 best = sz; file_index = i;
             }
         }
