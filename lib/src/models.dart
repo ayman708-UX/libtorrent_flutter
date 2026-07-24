@@ -275,10 +275,6 @@ class BtConfig {
   /// Enable responsive mode for readers (lower latency, more aggressive).
   final bool responsiveMode;
 
-  /// Enable WebTorrent (WebRTC) peer connectivity (libtorrent 2.1+).
-  /// Allows connecting to browser-based peers via WebSocket trackers.
-  final bool enableWebtorrent;
-
   const BtConfig({
     this.cacheSize = 64 * 1024 * 1024,
     this.readerReadAhead = 95,
@@ -296,7 +292,6 @@ class BtConfig {
     this.uploadRateLimit = 0,
     this.peersListenPort = 0,
     this.responsiveMode = true,
-    this.enableWebtorrent = true,
   });
 
   BtConfig copyWith({
@@ -316,7 +311,6 @@ class BtConfig {
     int? uploadRateLimit,
     int? peersListenPort,
     bool? responsiveMode,
-    bool? enableWebtorrent,
   }) => BtConfig(
     cacheSize: cacheSize ?? this.cacheSize,
     readerReadAhead: readerReadAhead ?? this.readerReadAhead,
@@ -334,12 +328,10 @@ class BtConfig {
     uploadRateLimit: uploadRateLimit ?? this.uploadRateLimit,
     peersListenPort: peersListenPort ?? this.peersListenPort,
     responsiveMode: responsiveMode ?? this.responsiveMode,
-    enableWebtorrent: enableWebtorrent ?? this.enableWebtorrent,
   );
 
   @override
   String toString() => 'BtConfig(cache=${cacheSize ~/ (1024 * 1024)}MB, '
       'readAhead=$readerReadAhead%, conns=$connectionsLimit, '
-      'encrypt=$forceEncrypt, responsive=$responsiveMode, '
-      'webtorrent=$enableWebtorrent)';
+      'encrypt=$forceEncrypt, responsive=$responsiveMode)';
 }

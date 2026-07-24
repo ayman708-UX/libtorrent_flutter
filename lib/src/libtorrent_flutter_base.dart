@@ -1,7 +1,6 @@
 // LibtorrentFlutter — Main engine class.
 // Manages a libtorrent session with automatic tracker injection,
 // status polling, and a built-in HTTP streaming server.
-// Supports WebTorrent (WebRTC) peers via libtorrent 2.1+.
 
 import 'dart:async';
 import 'dart:ffi';
@@ -12,9 +11,6 @@ import 'package:ffi/ffi.dart';
 
 import 'ffi_bindings.dart';
 import 'models.dart';
-
-// Flutter services for asset loading (SSL certs on Android)
-import 'package:flutter/services.dart' show rootBundle;
 
 // ─── Tracker Management ─────────────────────────────────────────────────────
 
@@ -168,14 +164,6 @@ class LibtorrentFlutter {
 
     final lib = TorrentBridgeBindings.open();
     engine._b = lib;
-
-    // On Android, extract the bundled CA certificate bundle and point
-    // OpenSSL to it BEFORE creating the session. This fixes WSS tracker
-    // connections for WebTorrent — libtorrent's session_impl.cpp has
-    // cert loading for Windows/macOS/Linux but NOT Android.
-    if (Platform.isAndroid) {
-      await engine._setupAndroidSslCerts();
-    }
 
     final iface = listenInterface.toNativeUtf8();
     try {
@@ -393,7 +381,6 @@ class LibtorrentFlutter {
       cfgPtr.ref.uploadRateLimit = config.uploadRateLimit;
       cfgPtr.ref.peersListenPort = config.peersListenPort;
       cfgPtr.ref.responsiveMode = config.responsiveMode ? 1 : 0;
-      cfgPtr.ref.enableWebtorrent = config.enableWebtorrent ? 1 : 0;
       _b.configureSession(_session, cfgPtr);
     } finally {
       calloc.free(cfgPtr);
@@ -425,7 +412,6 @@ class LibtorrentFlutter {
         uploadRateLimit: cfgPtr.ref.uploadRateLimit,
         peersListenPort: cfgPtr.ref.peersListenPort,
         responsiveMode: cfgPtr.ref.responsiveMode != 0,
-        enableWebtorrent: cfgPtr.ref.enableWebtorrent != 0,
       );
     } finally {
       calloc.free(cfgPtr);
@@ -567,51 +553,5 @@ class LibtorrentFlutter {
     await _torrentsCtrl.close();
     await _streamsCtrl.close();
     _instance = null;
-  }
-
-  // ─── Android SSL Certificate Setup ──────────────────────────────────────────
-
-  /// Extract the bundled Mozilla CA certificate bundle to the app's files
-  /// directory and set SSL_CERT_FILE so OpenSSL can verify HTTPS/WSS.
-  Future<void> _setupAndroidSslCerts() async {
-    try {
-      // Determine target path in app's files directory
-      final appDir = Directory.systemTemp.parent; // /data/user/0/<pkg>/cache -> parent = /data/user/0/<pkg>
-      final certFile = File('${appDir.path}/files/cacert.pem');
-
-      // Only extract if not already present or if it's stale (< 10KB = corrupt)
-      if (!certFile.existsSync() || certFile.lengthSync() < 10240) {
-        try {
-          final certData = await rootBundle.load('packages/libtorrent_flutter/assets/cacert.pem');
-          await certFile.parent.create(recursive: true);
-          await certFile.writeAsBytes(
-            certData.buffer.asUint8List(certData.offsetInBytes, certData.lengthInBytes),
-            flush: true,
-          );
-        } catch (_) {
-          // If asset loading fails, try the alternate path (app-bundled)
-          try {
-            final certData = await rootBundle.load('assets/cacert.pem');
-            await certFile.parent.create(recursive: true);
-            await certFile.writeAsBytes(
-              certData.buffer.asUint8List(certData.offsetInBytes, certData.lengthInBytes),
-              flush: true,
-            );
-          } catch (_) {
-            return; // Can't load cert bundle — WSS trackers may not work
-          }
-        }
-      }
-
-      // Tell the native layer to set SSL_CERT_FILE env var
-      final pathPtr = certFile.path.toNativeUtf8();
-      try {
-        _b.setSslCertFile(pathPtr);
-      } finally {
-        malloc.free(pathPtr);
-      }
-    } catch (_) {
-      // Best-effort — don't crash the app if cert setup fails
-    }
   }
 }

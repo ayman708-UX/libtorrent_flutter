@@ -191,7 +191,6 @@ final class LtBtConfig extends Struct {
   @Int32()  external int uploadRateLimit;
   @Int32()  external int peersListenPort;
   @Int32()  external int responsiveMode;
-  @Int32()  external int enableWebtorrent;
 }
 
 // ─── Engine config — port of btserver.go configure() ─────────────────────────
@@ -219,9 +218,6 @@ typedef LtLastError = Pointer<Utf8> Function();
 
 typedef _VersionN = Pointer<Utf8> Function();
 typedef LtVersion = Pointer<Utf8> Function();
-
-typedef _SetSslCertFileN = Void Function(Pointer<Utf8>);
-typedef LtSetSslCertFile = void Function(Pointer<Utf8>);
 
 // ─── Helper: read fixed char array ──────────────────────────────────────────
 String readCharArray(Array<Char> arr, int maxLen) {
@@ -286,7 +282,6 @@ class TorrentBridgeBindings {
   late final LtGetActiveStreams   getActiveStreams;
   late final LtLastError          lastError;
   late final LtVersion            version;
-  late final LtSetSslCertFile     setSslCertFile;
 
   TorrentBridgeBindings(this._lib) {
     createSession       = _lib.lookup<NativeFunction<_CreateSessionN>>('lt_create_session').asFunction<LtCreateSession>();
@@ -318,7 +313,6 @@ class TorrentBridgeBindings {
     getActiveStreams     = _lib.lookup<NativeFunction<_GetActiveStreamsN>>('lt_get_active_streams').asFunction<LtGetActiveStreams>();
     lastError           = _lib.lookup<NativeFunction<_LastErrorN>>('lt_last_error').asFunction<LtLastError>();
     version             = _lib.lookup<NativeFunction<_VersionN>>('lt_version').asFunction<LtVersion>();
-    setSslCertFile      = _lib.lookup<NativeFunction<_SetSslCertFileN>>('lt_set_ssl_cert_file').asFunction<LtSetSslCertFile>();
   }
 
   factory TorrentBridgeBindings.open() => TorrentBridgeBindings(_openNativeLib());

@@ -43,9 +43,9 @@ if(WIN32)
         NOMINMAX
         _WIN32_WINNT=0x0601
     )
-    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../libtorrent-src ${CMAKE_CURRENT_BINARY_DIR}/libtorrent-build)
+    find_package(LibtorrentRasterbar REQUIRED)
     target_link_libraries(libtorrent_flutter PRIVATE
-        torrent-rasterbar
+        LibtorrentRasterbar::torrent-rasterbar
         ws2_32
     )
     if(MSVC)
