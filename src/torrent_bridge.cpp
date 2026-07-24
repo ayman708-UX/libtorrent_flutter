@@ -1819,7 +1819,7 @@ TORRENT_API lt_session_t lt_create_session(const char* iface, int dl, int ul) {
             | lt::alert_category::piece_progress);
 
         sp.set_str(lt::settings_pack::listen_interfaces,
-            (iface && *iface) ? iface : "0.0.0.0:6881,[::]:6881");
+            (iface && *iface) ? iface : "0.0.0.0:0,[::]:0");
 
         if (dl > 0) sp.set_int(lt::settings_pack::download_rate_limit, dl);
         if (ul > 0) sp.set_int(lt::settings_pack::upload_rate_limit,   ul);

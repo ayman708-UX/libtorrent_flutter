@@ -445,8 +445,8 @@ class LibtorrentFlutter {
   static void _onAlert(int type, int torrentId, Pointer<Utf8> message, Pointer<Void> userData) {
     // Silently consume alerts — users can listen to torrentUpdates for state changes.
     // Uncomment for debugging:
-    // final msg = message.toDartString();
-    // print('LibtorrentFlutter Alert: [T$torrentId] $msg');
+    final msg = message.toDartString();
+    print('LibtorrentFlutter Alert: [T$torrentId] $msg');
   }
 
   void _pollTorrents() {
