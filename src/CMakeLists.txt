@@ -14,10 +14,7 @@ project(libtorrent_flutter_native LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Help find_package locate vcpkg-installed packages
-if(DEFINED ENV{VCPKG_ROOT})
-    list(APPEND CMAKE_PREFIX_PATH "$ENV{VCPKG_ROOT}/installed/x64-windows")
-endif()
+
 
 add_library(libtorrent_flutter SHARED
     torrent_bridge.cpp
@@ -43,11 +40,35 @@ if(WIN32)
         NOMINMAX
         _WIN32_WINNT=0x0601
     )
+
+    # LibtorrentRasterbar installed from source; caller passes
+    # -DCMAKE_PREFIX_PATH=<libtorrent-install-dir>
     find_package(LibtorrentRasterbar REQUIRED)
     target_link_libraries(libtorrent_flutter PRIVATE
         LibtorrentRasterbar::torrent-rasterbar
         ws2_32
+        crypt32
+        iphlpapi
     )
+
+    # OpenSSL built from source; caller passes -DOPENSSL_ROOT_DIR=...
+    find_package(OpenSSL REQUIRED)
+    target_link_libraries(libtorrent_flutter PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+
+    # WebTorrent static deps from libtorrent build tree.
+    # CI passes -DWEBTORRENT_DATACHANNEL_LIB=... -DWEBTORRENT_JUICE_LIB=... -DWEBTORRENT_USRSCTP_LIB=...
+    foreach(_wt_lib WEBTORRENT_DATACHANNEL_LIB WEBTORRENT_JUICE_LIB WEBTORRENT_USRSCTP_LIB)
+        if(DEFINED ${_wt_lib} AND EXISTS "${${_wt_lib}}")
+            target_link_libraries(libtorrent_flutter PRIVATE "${${_wt_lib}}")
+            message(STATUS "WebTorrent dep: ${${_wt_lib}}")
+        endif()
+    endforeach()
+
+    # Boost include (header-only; caller passes -DBoost_INCLUDE_DIR=...)
+    if(DEFINED Boost_INCLUDE_DIR AND EXISTS "${Boost_INCLUDE_DIR}")
+        target_include_directories(libtorrent_flutter PRIVATE "${Boost_INCLUDE_DIR}")
+    endif()
+
     if(MSVC)
         target_compile_options(libtorrent_flutter PRIVATE /W3 /utf-8 /bigobj)
     endif()

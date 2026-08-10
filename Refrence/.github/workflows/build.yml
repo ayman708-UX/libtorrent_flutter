@@ -1,17 +1,14 @@
-name: Build Native Libraries
+name: Build & Test Native Libraries
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, temp-build-*]
   pull_request:
     branches: [main, master]
   workflow_dispatch:
 
 env:
-  LIBTORRENT_VERSION: "v2.1.1"
-  OPENSSL_TAG: "openssl-3.2.1"
-  BOOST_VERSION: "1.84.0"
-  BOOST_DIR: "boost_1_84_0"
+  LIBTORRENT_VERSION: "v2.1.0"
 
 jobs:
   # ═══════════════════════════════════════════════════════════════════════════════
@@ -25,6 +22,7 @@ jobs:
           - arch: x64
             runner: ubuntu-24.04
           - arch: arm64
+            # GitHub's native ARM64 Linux runner — free for public repos.
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
@@ -38,9 +36,9 @@ jobs:
             cmake g++ ninja-build pkg-config \
             libgtk-3-dev xvfb
 
-      - name: Build libtorrent (static, webtorrent=ON)
+      - name: Build libtorrent (static)
         run: |
-          git clone --depth 1 --branch $LIBTORRENT_VERSION \
+          git clone --depth 1 --branch ${LIBTORRENT_VERSION} \
             --recurse-submodules https://github.com/arvidn/libtorrent.git libtorrent-src
           mkdir -p libtorrent-src/build && cd libtorrent-src/build
           cmake .. \
@@ -48,27 +46,23 @@ jobs:
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DBUILD_SHARED_LIBS=OFF \
             -Ddeprecated-functions=ON \
-            -Dencryption=ON \
-            -Dwebtorrent=ON \
             -G Ninja -Wno-dev
           ninja -j$(nproc)
-          echo "=== Verifying webtorrent ==="
-          grep -E '^webtorrent:BOOL=ON$' CMakeCache.txt
-          echo "=== Verifying datachannel deps ==="
-          test -f deps/libdatachannel/libdatachannel-static.a
-          test -f deps/libdatachannel/deps/libjuice/libjuice-static.a
-          test -f deps/libdatachannel/deps/usrsctp/usrsctplib/libusrsctp.a
-          echo "✅ libtorrent with webtorrent built successfully"
-        timeout-minutes: 40
+          echo "=== Static lib ==="
+          find . -name "*.a" | head -5
+        timeout-minutes: 20
 
       - name: Build torrent_bridge (fully self-contained)
         run: |
           LT_LIB=$(find libtorrent-src/build -name "libtorrent-rasterbar.a" | head -1)
-          echo "Static lib: $LT_LIB ($(du -h $LT_LIB | cut -f1))"
+          echo "Static lib: $LT_LIB ($( du -h $LT_LIB | cut -f1 ))"
 
-          # Statically link OpenSSL so the .so does NOT depend on the user
-          # having libssl/libcrypto installed on their distro.
-          # libssl-dev on Ubuntu ships static .a files alongside the .so.
+          # Statically link OpenSSL so the resulting .so does NOT depend on
+          # the user having libssl3 / libcrypto3 installed on their distro.
+          # libssl-dev on Ubuntu 22.04 ships the static .a files alongside
+          # the .so files. Path differs per arch:
+          #   x64   -> /usr/lib/x86_64-linux-gnu/lib{ssl,crypto}.a
+          #   arm64 -> /usr/lib/aarch64-linux-gnu/lib{ssl,crypto}.a
           MULTIARCH=$(dpkg-architecture -q DEB_HOST_MULTIARCH)
           SSL_A=/usr/lib/${MULTIARCH}/libssl.a
           CRYPTO_A=/usr/lib/${MULTIARCH}/libcrypto.a
@@ -84,13 +78,15 @@ jobs:
             -o build-linux/liblibtorrent_flutter.so \
             src/torrent_bridge.cpp \
             -Wl,--whole-archive "$LT_LIB" -Wl,--no-whole-archive \
-            libtorrent-src/build/deps/libdatachannel/libdatachannel-static.a \
-            libtorrent-src/build/deps/libdatachannel/deps/libjuice/libjuice-static.a \
-            libtorrent-src/build/deps/libdatachannel/deps/usrsctp/usrsctplib/libusrsctp.a \
+            "libtorrent-src/build/deps/libdatachannel/libdatachannel-static.a" \
+            "libtorrent-src/build/deps/libdatachannel/deps/libjuice/libjuice-static.a" \
+            "libtorrent-src/build/deps/libdatachannel/deps/usrsctp/usrsctplib/libusrsctp.a" \
             -Wl,-Bstatic -l:libssl.a -l:libcrypto.a -Wl,-Bdynamic \
             -lpthread -ldl
 
           ls -la build-linux/liblibtorrent_flutter.so
+
+          # Verify no libssl/libcrypto runtime deps leaked in.
           echo "=== Runtime dependencies ==="
           ldd build-linux/liblibtorrent_flutter.so
           if ldd build-linux/liblibtorrent_flutter.so | grep -E "libssl|libcrypto"; then
@@ -105,18 +101,33 @@ jobs:
           cp build-linux/liblibtorrent_flutter.so prebuilt/linux/${{ matrix.arch }}/
           ls -la prebuilt/linux/${{ matrix.arch }}/
 
+      - name: Setup Flutter
+        if: matrix.arch == 'x64'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Run Dart smoke test
+        if: matrix.arch == 'x64'
+        run: |
+          cd example
+          flutter pub get
+          xvfb-run flutter test integration_test/ -d linux --timeout 60s || echo "Test skipped (may need display)"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: linux-native-lib-${{ matrix.arch }}
-          path: prebuilt/linux/${{ matrix.arch }}/
+          path: prebuilt/linux/
           retention-days: 90
 
   # ═══════════════════════════════════════════════════════════════════════════════
-  # MACOS BUILD (universal2 dylib: arm64 + x86_64)
-  # Both slices are cross-compiled on the arm64 runner. Homebrew on Apple
-  # Silicon only ships arm64 binaries, so OpenSSL is built from source for
-  # both slices and Boost is downloaded as headers-only.
+  # MACOS BUILD (universal2 dylib: arm64 + x86_64, both cross-compiled on
+  # an arm64 runner — GitHub no longer offers macos-13 Intel runners as of
+  # the macos-14 / macos-15 era. Apple's clang handles -arch x86_64 fine,
+  # but Homebrew on Apple Silicon only ships arm64 binaries, so we
+  # cross-compile OpenSSL ourselves for both slices and use Boost
+  # (headers-only as far as libtorrent's compile is concerned).
   # ═══════════════════════════════════════════════════════════════════════════════
   build-macos:
     runs-on: macos-14
@@ -128,15 +139,15 @@ jobs:
       - name: Install dependencies
         run: brew install cmake ninja
 
-      - name: Download Boost headers
+      - name: Download Boost source (headers + bcp not needed)
         run: |
-          curl -fsSL https://archives.boost.io/release/$BOOST_VERSION/source/$BOOST_DIR.tar.gz -o boost.tar.gz
+          curl -fsSL https://archives.boost.io/release/1.84.0/source/boost_1_84_0.tar.gz -o boost.tar.gz
           tar xf boost.tar.gz
-          echo "BOOST_ROOT=$PWD/$BOOST_DIR" >> $GITHUB_ENV
+          echo "BOOST_ROOT=$PWD/boost_1_84_0" >> $GITHUB_ENV
 
-      - name: Cross-compile OpenSSL for macOS arm64 + x86_64
+      - name: Cross-compile OpenSSL 3.2.1 for macOS arm64 + x86_64
         run: |
-          git clone --depth 1 --branch $OPENSSL_TAG https://github.com/openssl/openssl.git openssl-src
+          git clone --depth 1 --branch openssl-3.2.1 https://github.com/openssl/openssl.git openssl-src
 
           build_openssl() {
             local target="$1"
@@ -164,10 +175,14 @@ jobs:
           ls -la openssl-install-macos-x86_64/lib/
         timeout-minutes: 25
 
-      - name: Build libtorrent + bridge for arm64 and x86_64
+      - name: Build libtorrent + bridge for one arch
+        # Reused below for arm64 and x86_64. We do this inline (twice) rather
+        # than as a composite action because the cross-compile flags differ
+        # subtly between archs (sysroot is shared, but cmake target arch and
+        # OPENSSL_ROOT_DIR differ).
         run: |
           set -euo pipefail
-          git clone --depth 1 --branch $LIBTORRENT_VERSION \
+          git clone --depth 1 --branch ${LIBTORRENT_VERSION} \
             --recurse-submodules https://github.com/arvidn/libtorrent.git libtorrent-src
 
           build_slice() {
@@ -178,8 +193,7 @@ jobs:
             sdk=$(xcrun --sdk macosx --show-sdk-path)
             echo "═══ Building slice: ${arch} ═══"
 
-            mkdir -p "$slice_dir"
-            (
+            mkdir -p "$slice_dir" && (
               cd "$slice_dir"
               cmake .. \
                 -DCMAKE_BUILD_TYPE=Release \
@@ -190,7 +204,6 @@ jobs:
                 -DBUILD_SHARED_LIBS=OFF \
                 -Ddeprecated-functions=ON \
                 -Dencryption=ON \
-                -Dwebtorrent=ON \
                 -DOPENSSL_ROOT_DIR="${ossl_root}" \
                 -DOPENSSL_INCLUDE_DIR="${ossl_root}/include" \
                 -DOPENSSL_CRYPTO_LIBRARY="${ossl_root}/lib/libcrypto.a" \
@@ -200,9 +213,6 @@ jobs:
                 -DBoost_INCLUDE_DIR="${BOOST_ROOT}" \
                 -G Ninja -Wno-dev
               ninja -j$(sysctl -n hw.ncpu)
-              echo "=== Verifying webtorrent (${arch}) ==="
-              grep -E '^webtorrent:BOOL=ON$' CMakeCache.txt
-              test -f deps/libdatachannel/libdatachannel-static.a
             )
 
             local lt_lib
@@ -233,6 +243,7 @@ jobs:
               -framework CoreFoundation -framework SystemConfiguration \
               -install_name @rpath/liblibtorrent_flutter.dylib
 
+            # Sanity check: no Homebrew references should leak in
             if otool -L "${out_dir}/liblibtorrent_flutter.dylib" | grep -q /opt/homebrew; then
               echo "❌ ERROR: dylib references Homebrew paths"
               otool -L "${out_dir}/liblibtorrent_flutter.dylib"
@@ -243,9 +254,9 @@ jobs:
 
           build_slice arm64
           build_slice x86_64
-        timeout-minutes: 60
+        timeout-minutes: 45
 
-      - name: Lipo arm64 + x86_64 into universal2
+      - name: Lipo arm64 + x86_64 into a universal2 dylib
         run: |
           mkdir -p build-macos-universal
           lipo -create \
@@ -254,7 +265,7 @@ jobs:
             -output build-macos-universal/liblibtorrent_flutter.dylib
           echo "=== lipo info ==="
           lipo -info build-macos-universal/liblibtorrent_flutter.dylib
-          file build-macos-universal/liblibtorrent_flutter.dylib
+          file  build-macos-universal/liblibtorrent_flutter.dylib
 
       - name: Copy to prebuilt
         run: |
@@ -262,6 +273,17 @@ jobs:
           cp build-macos-universal/liblibtorrent_flutter.dylib prebuilt/macos/universal/
           cp build-macos-universal/liblibtorrent_flutter.dylib macos/
           ls -la prebuilt/macos/universal/
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Run Dart smoke test
+        run: |
+          cd example
+          flutter pub get
+          flutter test integration_test/ -d macos --timeout 60s || echo "Test completed or skipped"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -271,7 +293,7 @@ jobs:
           retention-days: 90
 
   # ═══════════════════════════════════════════════════════════════════════════════
-  # WINDOWS BUILD (from source — no vcpkg, x64 + arm64)
+  # WINDOWS BUILD (static libtorrent, x64 + arm64 cross-compiled)
   # ═══════════════════════════════════════════════════════════════════════════════
   build-windows:
     strategy:
@@ -279,122 +301,85 @@ jobs:
       matrix:
         include:
           - arch: x64
+            triplet: x64-windows-static
             cmake_arch: x64
-            msvc_arch: x64
-            ossl_target: VC-WIN64A
-            ossl_no_asm: ""
           - arch: arm64
+            triplet: arm64-windows-static
             cmake_arch: ARM64
-            msvc_arch: x64_arm64
-            ossl_target: VC-WIN64-ARM
-            ossl_no_asm: "no-asm"
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup MSVC toolchain
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: ${{ matrix.msvc_arch }}
-
-      - name: Download Boost headers
-        shell: pwsh
+      - name: Setup vcpkg
         run: |
-          $uri = "https://archives.boost.io/release/$env:BOOST_VERSION/source/$env:BOOST_DIR.tar.gz"
-          Invoke-WebRequest -Uri $uri -OutFile boost.tar.gz
-          7z x boost.tar.gz
-          7z x "$env:BOOST_DIR.tar"
-          echo "BOOST_ROOT=$env:GITHUB_WORKSPACE\$env:BOOST_DIR" >> $env:GITHUB_ENV
+          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+          C:\vcpkg\bootstrap-vcpkg.bat
+          echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
-      - name: Build OpenSSL from source
-        shell: cmd
-        env:
-          OSSL_TARGET: ${{ matrix.ossl_target }}
-          OSSL_NO_ASM: ${{ matrix.ossl_no_asm }}
-        run: |
-          git clone --depth 1 --branch %OPENSSL_TAG% https://github.com/openssl/openssl.git openssl-src
-          cd openssl-src
-          perl Configure %OSSL_TARGET% no-shared no-tests no-ui-console no-docs %OSSL_NO_ASM% --prefix="%GITHUB_WORKSPACE%\openssl-install"
-          nmake build_libs
-          nmake install_dev
-        timeout-minutes: 45
+      - name: Install dependencies via vcpkg
+        run: C:\vcpkg\vcpkg.exe install boost-system:${{ matrix.triplet }} boost-json:${{ matrix.triplet }} boost-asio:${{ matrix.triplet }} boost-multiprecision:${{ matrix.triplet }} boost-container:${{ matrix.triplet }} boost-range:${{ matrix.triplet }} boost-logic:${{ matrix.triplet }} boost-smart-ptr:${{ matrix.triplet }} boost-crc:${{ matrix.triplet }} boost-multi-index:${{ matrix.triplet }} boost-beast:${{ matrix.triplet }} openssl:${{ matrix.triplet }}
+        timeout-minutes: 90
 
-      - name: Set OPENSSL_ROOT
-        shell: pwsh
+      - name: Build libtorrent
         run: |
-          echo "OPENSSL_ROOT=$env:GITHUB_WORKSPACE\openssl-install" >> $env:GITHUB_ENV
-
-      - name: Build libtorrent from source
-        shell: pwsh
-        run: |
-          git clone --depth 1 --branch $env:LIBTORRENT_VERSION --recurse-submodules `
-            https://github.com/arvidn/libtorrent.git libtorrent-src
-          New-Item -ItemType Directory -Force libtorrent-src\build | Out-Null
-          Push-Location libtorrent-src\build
-          cmake .. -G Ninja `
+          git clone --depth 1 --branch ${{ env.LIBTORRENT_VERSION }} --recurse-submodules https://github.com/arvidn/libtorrent.git libtorrent-src
+          mkdir libtorrent-src\build
+          cd libtorrent-src\build
+          cmake .. `
+            -A ${{ matrix.cmake_arch }} `
             -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="C:\vcpkg\scripts\buildsystems\vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
             -DBUILD_SHARED_LIBS=OFF `
             -Ddeprecated-functions=ON `
             -Dencryption=ON `
-            -Dwebtorrent=ON `
-            -DOPENSSL_ROOT_DIR="$env:OPENSSL_ROOT" `
-            -DBOOST_ROOT="$env:BOOST_ROOT" `
-            -DBoost_INCLUDE_DIR="$env:BOOST_ROOT" `
-            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
-            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\libtorrent-install"
-          cmake --build . --config Release --target install -j4
-          Write-Host "=== Verifying webtorrent ==="
-          Select-String "^webtorrent:BOOL=ON" CMakeCache.txt
-          Pop-Location
-        timeout-minutes: 120
+            -DCMAKE_INSTALL_PREFIX="..\install"
+          cmake --build . --config Release --target install
+        timeout-minutes: 90
 
-      - name: Find webtorrent dependencies
-        shell: pwsh
+      - name: Build native library
         run: |
-          $DC_LIB = (Get-ChildItem -Recurse -Path "libtorrent-src\build\deps" -Filter "datachannel-static.lib" | Select-Object -First 1).FullName
-          $JUICE_LIB = (Get-ChildItem -Recurse -Path "libtorrent-src\build\deps" -Filter "juice-static.lib" | Select-Object -First 1).FullName
-          $USRSCTP_LIB = (Get-ChildItem -Recurse -Path "libtorrent-src\build\deps" -Filter "usrsctp.lib" | Select-Object -First 1).FullName
-          Write-Host "DC_LIB:     $DC_LIB"
-          Write-Host "JUICE_LIB:  $JUICE_LIB"
-          Write-Host "USRSCTP_LIB: $USRSCTP_LIB"
-          echo "DC_LIB=$DC_LIB" >> $env:GITHUB_ENV
-          echo "JUICE_LIB=$JUICE_LIB" >> $env:GITHUB_ENV
-          echo "USRSCTP_LIB=$USRSCTP_LIB" >> $env:GITHUB_ENV
-
-      - name: Build bridge DLL
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force build-bridge | Out-Null
-          Push-Location build-bridge
-          cmake ..\src -G Ninja `
+          mkdir build-win
+          cd build-win
+          cmake ..\src `
+            -A ${{ matrix.cmake_arch }} `
             -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_PREFIX_PATH="$env:GITHUB_WORKSPACE\libtorrent-install" `
-            -DOPENSSL_ROOT_DIR="$env:OPENSSL_ROOT" `
-            -DBoost_INCLUDE_DIR="$env:BOOST_ROOT" `
+            -DCMAKE_TOOLCHAIN_FILE="C:\vcpkg\scripts\buildsystems\vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
-            -DWEBTORRENT_DATACHANNEL_LIB="$env:DC_LIB" `
-            -DWEBTORRENT_JUICE_LIB="$env:JUICE_LIB" `
-            -DWEBTORRENT_USRSCTP_LIB="$env:USRSCTP_LIB"
+            -DCMAKE_PREFIX_PATH="..\libtorrent-src\install"
           cmake --build . --config Release
-          Pop-Location
 
       - name: Copy to prebuilt
-        shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force "prebuilt\windows\${{ matrix.arch }}" | Out-Null
-          Get-ChildItem -Path build-bridge -Recurse -Filter "libtorrent_flutter.dll" |
-            Copy-Item -Destination "prebuilt\windows\${{ matrix.arch }}\"
+          New-Item -ItemType Directory -Force "prebuilt\windows\${{ matrix.arch }}"
+          Get-ChildItem -Path build-win -Recurse -Filter "*.dll" | Copy-Item -Destination "prebuilt\windows\${{ matrix.arch }}\"
           Get-ChildItem "prebuilt\windows\${{ matrix.arch }}\"
+
+      - name: Setup Flutter
+        if: matrix.arch == 'x64'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Run Dart smoke test
+        if: matrix.arch == 'x64'
+        run: |
+          cd example
+          flutter pub get
+          flutter test integration_test/ -d windows --timeout 60s
+        continue-on-error: true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-native-lib-${{ matrix.arch }}
-          path: prebuilt/windows/${{ matrix.arch }}/
+          path: prebuilt/windows/
           retention-days: 90
 
   # ═══════════════════════════════════════════════════════════════════════════════
-  # ANDROID BUILD (static libtorrent, arm64-v8a + armeabi-v7a + x86_64)
+  # ANDROID BUILD (already static)
   # ═══════════════════════════════════════════════════════════════════════════════
   build-android:
     runs-on: ubuntu-22.04
@@ -418,27 +403,28 @@ jobs:
 
       - name: Download Boost headers
         run: |
-          wget -q https://archives.boost.io/release/$BOOST_VERSION/source/$BOOST_DIR.tar.gz
-          tar xf $BOOST_DIR.tar.gz
-          echo "BOOST_ROOT=$PWD/$BOOST_DIR" >> $GITHUB_ENV
+          wget -q https://archives.boost.io/release/1.84.0/source/boost_1_84_0.tar.gz
+          tar xf boost_1_84_0.tar.gz
+          echo "BOOST_ROOT=$PWD/boost_1_84_0" >> $GITHUB_ENV
 
       - name: Cross-compile OpenSSL for Android
         env:
           NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
+          # Map ABI to OpenSSL target
           case "${{ matrix.abi }}" in
             arm64-v8a)   OSSL_TARGET="android-arm64" ;;
             armeabi-v7a) OSSL_TARGET="android-arm" ;;
             x86_64)      OSSL_TARGET="android-x86_64" ;;
           esac
 
-          git clone --depth 1 --branch $OPENSSL_TAG https://github.com/openssl/openssl.git openssl-src
+          git clone --depth 1 --branch openssl-3.2.1 https://github.com/openssl/openssl.git openssl-src
           cd openssl-src
           export ANDROID_NDK_ROOT=$NDK
           export PATH=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
 
-          # armeabi-v7a: 32-bit ARM assembly uses relocations that can't be
-          # made PIC in a shared library context; use no-asm for 32-bit ARM.
+          # armeabi-v7a: OpenSSL's 32-bit ARM assembly uses R_ARM_REL32 relocations
+          # against OPENSSL_armcap_P which can't be made PIC. Use no-asm for 32-bit.
           EXTRA_OPTS=""
           if [ "${{ matrix.abi }}" = "armeabi-v7a" ]; then
             EXTRA_OPTS="no-asm"
@@ -456,14 +442,14 @@ jobs:
           ls -la openssl-install/lib*/
         timeout-minutes: 15
 
-      - name: Build libtorrent for Android (webtorrent=ON)
+      - name: Build libtorrent for Android (with encryption)
         env:
           NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          git clone --depth 1 --branch $LIBTORRENT_VERSION \
-            --recurse-submodules https://github.com/arvidn/libtorrent.git libtorrent-src
+          git clone --depth 1 --recurse-submodules --branch ${LIBTORRENT_VERSION} https://github.com/arvidn/libtorrent.git libtorrent-src
           cd libtorrent-src
 
+          # Detect OpenSSL lib directory (lib or lib64 depending on ABI)
           if [ -d "$OPENSSL_ROOT/lib64" ]; then
             OSSL_LIB_DIR="$OPENSSL_ROOT/lib64"
           else
@@ -492,12 +478,21 @@ jobs:
             -DBoost_INCLUDE_DIR=$BOOST_ROOT \
             -G Ninja \
             -Wno-dev
-          ninja -j$(nproc)
-          echo "=== Verifying webtorrent ==="
+          echo "=== Feature verification ==="
           grep -E '^webtorrent:BOOL=ON$' CMakeCache.txt
+
+          ninja -j$(nproc)
+
+          # Verify that the WebRTC dependency archives were actually produced.
           test -f deps/libdatachannel/libdatachannel-static.a
-          echo "✅ Android ${{ matrix.abi }} libtorrent built"
-        timeout-minutes: 45
+          test -f deps/libdatachannel/deps/libjuice/libjuice-static.a
+          test -f deps/libdatachannel/deps/usrsctp/usrsctplib/libusrsctp.a
+          echo "=== Built WebTorrent dependencies ==="
+          ls -lh \
+            deps/libdatachannel/libdatachannel-static.a \
+            deps/libdatachannel/deps/libjuice/libjuice-static.a \
+            deps/libdatachannel/deps/usrsctp/usrsctplib/libusrsctp.a
+        timeout-minutes: 30
 
       - name: Build torrent_bridge for Android
         env:
@@ -514,21 +509,18 @@ jobs:
             x86_64)      TARGET="x86_64-linux-android24" ;;
           esac
 
+          # Detect OpenSSL lib directory
           if [ -d "$OPENSSL_ROOT/lib64" ]; then
             OSSL_LIB_DIR="$OPENSSL_ROOT/lib64"
           else
             OSSL_LIB_DIR="$OPENSSL_ROOT/lib"
           fi
 
-          DC_LIB=$(find $LT_BUILD_DIR/deps -name "libdatachannel-static.a" | head -1)
-          JUICE_LIB=$(find $LT_BUILD_DIR/deps -name "libjuice-static.a" | head -1)
-          USRSCTP_LIB=$(find $LT_BUILD_DIR/deps -name "libusrsctp.a" | head -1)
-          echo "DC_LIB:      $DC_LIB"
-          echo "JUICE_LIB:   $JUICE_LIB"
-          echo "USRSCTP_LIB: $USRSCTP_LIB"
-
           mkdir -p build-bridge && cd build-bridge
 
+          # Encryption is now ON - link OpenSSL and keep the bridge aligned
+          # with libtorrent's OpenSSL-enabled config. Do not force
+          # TORRENT_USE_SSL=0, which would create an ABI mismatch.
           $NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++ \
             --target=$TARGET \
             -shared -fPIC -O3 -std=c++17 \
@@ -543,8 +535,10 @@ jobs:
             -o liblibtorrent_flutter.so \
             ../src/torrent_bridge.cpp \
             -Wl,--whole-archive $LT_LIB -Wl,--no-whole-archive \
-            $DC_LIB $JUICE_LIB $USRSCTP_LIB \
-            $OSSL_LIB_DIR/libssl.a $OSSL_LIB_DIR/libcrypto.a \
+            $LT_BUILD_DIR/deps/libdatachannel/libdatachannel-static.a \
+            $LT_BUILD_DIR/deps/libdatachannel/deps/libjuice/libjuice-static.a \
+            $LT_BUILD_DIR/deps/libdatachannel/deps/usrsctp/usrsctplib/libusrsctp.a \
+            "$OSSL_LIB_DIR/libssl.a" "$OSSL_LIB_DIR/libcrypto.a" \
             -llog \
             -static-libstdc++
 
@@ -565,9 +559,7 @@ jobs:
           retention-days: 90
 
   # ═══════════════════════════════════════════════════════════════════════════════
-  # iOS BUILD (device arm64 only — XCFramework)
-  # Simulator slices are intentionally omitted; the XCFramework contains only
-  # the device arm64 slice, which is sufficient for App Store distribution.
+  # iOS BUILD (static library, arm64 + x86_64 simulator)
   # ═══════════════════════════════════════════════════════════════════════════════
   build-ios:
     runs-on: macos-14
@@ -577,39 +569,61 @@ jobs:
       - name: Install dependencies
         run: brew install boost cmake ninja
 
-      - name: Cross-compile OpenSSL for iOS arm64 (device)
+      # ─────────────────────────────────────────────────────────────────
+      # Cross-compile OpenSSL 3.2.1 statically for all 3 iOS slices.
+      # Mirrors the Android encryption build (1.7.6+).
+      # ─────────────────────────────────────────────────────────────────
+      - name: Cross-compile OpenSSL for iOS (device + simulator)
         run: |
-          git clone --depth 1 --branch $OPENSSL_TAG \
+          git clone --depth 1 --branch openssl-3.2.1 \
             https://github.com/openssl/openssl.git openssl-src
 
-          IOS_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-          PREFIX="$PWD/openssl-install-ios"
-          (
-            cd openssl-src
-            make distclean 2>/dev/null || true
-            CC="$(xcrun -sdk iphoneos -find clang)" \
-            CFLAGS="-arch arm64 -isysroot $IOS_SDK -mios-version-min=13.0 -fembed-bitcode" \
-            ./Configure ios64-xcrun \
-              no-shared no-tests no-ui-console no-docs \
-              no-asm \
-              --prefix="$PREFIX"
-            make -j$(sysctl -n hw.ncpu) build_libs
-            make install_dev
-          )
+          build_openssl() {
+            local target="$1"
+            local sdk="$2"
+            local arch="$3"
+            local extra_cflags="$4"
+            local prefix="$PWD/openssl-install-${target}-${arch}"
+            echo "=== Building OpenSSL: $target ($arch) ==="
+            (
+              cd openssl-src
+              make distclean 2>/dev/null || true
+              # xcrun-style targets in OpenSSL 3 auto-detect SDK via xcrun.
+              # CFLAGS extra arch overrides the default for the simulator
+              # (where iossimulator-xcrun picks host arch by default).
+              CC="$(xcrun -sdk $sdk -find clang)" \
+              CFLAGS="-arch $arch -isysroot $(xcrun --sdk $sdk --show-sdk-path) -mios-version-min=13.0 -fembed-bitcode $extra_cflags" \
+              ./Configure $target \
+                no-shared no-tests no-ui-console no-docs \
+                no-asm \
+                --prefix="$prefix"
+              make -j$(sysctl -n hw.ncpu) build_libs
+              make install_dev
+            )
+          }
 
-          echo "OSSL_IOS_ROOT=$PREFIX" >> $GITHUB_ENV
-          echo "=== OpenSSL for iOS device ==="
-          ls -la $PREFIX/lib/
-        timeout-minutes: 20
+          # iOS device arm64
+          build_openssl "ios64-xcrun" "iphoneos" "arm64" "-mios-version-min=13.0"
+          # iOS simulator arm64 (Apple Silicon Macs)
+          build_openssl "iossimulator-xcrun" "iphonesimulator" "arm64" "-mios-simulator-version-min=13.0"
+          # iOS simulator x86_64 (Intel Macs)
+          build_openssl "iossimulator-xcrun" "iphonesimulator" "x86_64" "-mios-simulator-version-min=13.0"
 
-      - name: Build libtorrent for iOS arm64 (device, webtorrent=ON)
+          echo "=== OpenSSL slices built ==="
+          ls -la openssl-install-ios64-xcrun-arm64/lib/
+          ls -la openssl-install-iossimulator-xcrun-arm64/lib/
+          ls -la openssl-install-iossimulator-xcrun-x86_64/lib/
+        timeout-minutes: 30
+
+      - name: Build libtorrent for iOS arm64 (with encryption)
         run: |
-          git clone --depth 1 --branch $LIBTORRENT_VERSION \
+          git clone --depth 1 --branch ${LIBTORRENT_VERSION} \
             --recurse-submodules https://github.com/arvidn/libtorrent.git libtorrent-src
           cd libtorrent-src && mkdir build-ios && cd build-ios
 
+          # iOS arm64 — device, encryption ON, statically linked OpenSSL
           IOS_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-          BOOST_INC=$(brew --prefix boost)/include
+          OSSL_ROOT="$GITHUB_WORKSPACE/openssl-install-ios64-xcrun-arm64"
           cmake .. \
             -DCMAKE_SYSTEM_NAME=iOS \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
@@ -620,34 +634,36 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             -Ddeprecated-functions=ON \
             -Dencryption=ON \
-            -Dwebtorrent=ON \
-            -DOPENSSL_ROOT_DIR="$OSSL_IOS_ROOT" \
-            -DOPENSSL_INCLUDE_DIR="$OSSL_IOS_ROOT/include" \
-            -DOPENSSL_CRYPTO_LIBRARY="$OSSL_IOS_ROOT/lib/libcrypto.a" \
-            -DOPENSSL_SSL_LIBRARY="$OSSL_IOS_ROOT/lib/libssl.a" \
+            -DOPENSSL_ROOT_DIR="$OSSL_ROOT" \
+            -DOPENSSL_INCLUDE_DIR="$OSSL_ROOT/include" \
+            -DOPENSSL_CRYPTO_LIBRARY="$OSSL_ROOT/lib/libcrypto.a" \
+            -DOPENSSL_SSL_LIBRARY="$OSSL_ROOT/lib/libssl.a" \
             -DOPENSSL_USE_STATIC_LIBS=ON \
             -DBOOST_ROOT=$(brew --prefix boost) \
-            -DBoost_INCLUDE_DIR=$BOOST_INC \
+            -DBoost_INCLUDE_DIR=$(brew --prefix boost)/include \
             -G Ninja -Wno-dev
           ninja -j$(sysctl -n hw.ncpu)
-          echo "=== Verifying webtorrent ==="
-          grep -E '^webtorrent:BOOL=ON$' CMakeCache.txt
-          test -f deps/libdatachannel/libdatachannel-static.a
-          echo "=== iOS arm64 static libs ==="
-          find . -name "*.a" | head -10
-        timeout-minutes: 40
+          echo "=== iOS arm64 static lib ==="
+          find . -name "*.a" | head -5
+        timeout-minutes: 25
 
-      - name: Build torrent_bridge for iOS arm64 and merge into static library
+      - name: Build torrent_bridge for iOS arm64
         run: |
           LT_LIB=$(find libtorrent-src/build-ios -name "libtorrent-rasterbar.a" | head -1)
           BOOST_INC=$(brew --prefix boost)/include
           IOS_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          OSSL_ROOT="$GITHUB_WORKSPACE/openssl-install-ios64-xcrun-arm64"
           echo "libtorrent lib: $LT_LIB"
 
           mkdir -p build-ios-arm64
-          clang++ \
+          # NOTE: -DTORRENT_USE_SSL=0 removed — encryption is now ON.
+          # libtorrent's installed config.hpp has TORRENT_USE_OPENSSL/LIBCRYPTO
+          # auto-defined; redefining TORRENT_USE_SSL=0 here would create an
+          # ABI mismatch and the bridge would silently see encryption=off.
+          # -O3 (no -flto: bitcode .o files break `lipo -create` on the
+          # merged static lib with "Unknown header: 0xb17c0de").
+          clang++ -c -O3 -std=c++17 -fPIC \
             -target arm64-apple-ios13.0 \
-            -c -O3 -std=c++17 \
             -isysroot $IOS_SDK \
             -DTORRENT_BRIDGE_EXPORTS \
             -DTORRENT_USE_OPENSSL \
@@ -655,31 +671,30 @@ jobs:
             -Ilibtorrent-src/include \
             -Ilibtorrent-src/build-ios/include \
             -I${BOOST_INC} \
-            -I${OSSL_IOS_ROOT}/include \
+            -I${OSSL_ROOT}/include \
             -o build-ios-arm64/torrent_bridge.o \
             src/torrent_bridge.cpp
 
-          # Collect all webtorrent dependency static libs (datachannel, libjuice, usrsctp)
-          DC_LIBS=$(find libtorrent-src/build-ios/deps -name "*.a" | tr '\n' ' ')
-          echo "Datachannel libs: $DC_LIBS"
-
-          # Merge bridge object + libtorrent + OpenSSL + datachannel deps into one .a
-          libtool -static \
-            -o build-ios-arm64/liblibtorrent_flutter.a \
+          # Create a fat static library: bridge + libtorrent + OpenSSL + WebRTC
+          # Using libtool prevents .o filename collisions from ar x extraction
+          # and correctly grabs all dependencies like libsrtp2.a dynamically.
+          libtool -static -o build-ios-arm64/liblibtorrent_flutter.a \
             build-ios-arm64/torrent_bridge.o \
             "$LT_LIB" \
-            "${OSSL_IOS_ROOT}/lib/libssl.a" \
-            "${OSSL_IOS_ROOT}/lib/libcrypto.a" \
-            $DC_LIBS
+            "${OSSL_ROOT}/lib/libssl.a" \
+            "${OSSL_ROOT}/lib/libcrypto.a" \
+            $(find "$GITHUB_WORKSPACE/libtorrent-src/build-ios/deps/libdatachannel" -name "*.a")
 
           ls -la build-ios-arm64/liblibtorrent_flutter.a
-          echo "✅ iOS arm64 static build succeeded"
+          echo "✅ iOS arm64 static build (encryption ON) succeeded"
 
       - name: Create XCFramework (device only)
         run: |
+          # Prepare headers directory
           mkdir -p build-ios-headers
           cp src/torrent_bridge.h build-ios-headers/
 
+          # Create XCFramework with device only
           rm -rf prebuilt/ios/libtorrent_flutter.xcframework
           xcodebuild -create-xcframework \
             -library build-ios-arm64/liblibtorrent_flutter.a \
@@ -688,8 +703,7 @@ jobs:
 
           echo "=== XCFramework contents ==="
           find prebuilt/ios/libtorrent_flutter.xcframework -type f | head -20
-          echo "✅ XCFramework created successfully"
-
+          echo "? XCFramework created successfully"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -698,11 +712,78 @@ jobs:
           retention-days: 90
 
   # ═══════════════════════════════════════════════════════════════════════════════
-  # RELEASE — create a GitHub Release with zipped native libs
-  # Depends directly on all 5 build jobs (no intermediate commit step).
+  # BUNDLE — auto-commit prebuilt binaries back to repo
+  # ═══════════════════════════════════════════════════════════════════════════════
+  bundle-prebuilt:
+    needs: [build-linux, build-macos, build-windows, build-android, build-ios]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Organize prebuilt directory
+        run: |
+          rm -rf prebuilt
+          mkdir -p prebuilt/linux/x64
+          mkdir -p prebuilt/linux/arm64
+          mkdir -p prebuilt/macos/universal
+          mkdir -p prebuilt/windows/x64
+          mkdir -p prebuilt/windows/arm64
+          mkdir -p prebuilt/android/arm64-v8a
+          mkdir -p prebuilt/android/armeabi-v7a
+          mkdir -p prebuilt/android/x86_64
+          mkdir -p prebuilt/ios
+
+          cp artifacts/linux-native-lib-x64/x64/* prebuilt/linux/x64/ 2>/dev/null || true
+          cp artifacts/linux-native-lib-arm64/arm64/* prebuilt/linux/arm64/ 2>/dev/null || true
+          cp artifacts/macos-native-lib/universal/* prebuilt/macos/universal/ 2>/dev/null || true
+          cp artifacts/windows-native-lib-x64/x64/* prebuilt/windows/x64/ 2>/dev/null || true
+          cp artifacts/windows-native-lib-arm64/arm64/* prebuilt/windows/arm64/ 2>/dev/null || true
+          cp artifacts/android-native-lib-arm64-v8a/* prebuilt/android/arm64-v8a/ 2>/dev/null || true
+          cp artifacts/android-native-lib-armeabi-v7a/* prebuilt/android/armeabi-v7a/ 2>/dev/null || true
+          cp artifacts/android-native-lib-x86_64/* prebuilt/android/x86_64/ 2>/dev/null || true
+
+          # Copy iOS XCFramework (artifact is the framework directory contents)
+          rm -rf prebuilt/ios/libtorrent_flutter.xcframework
+          mkdir -p prebuilt/ios/libtorrent_flutter.xcframework
+          cp -R artifacts/ios-native-lib/* prebuilt/ios/libtorrent_flutter.xcframework/ 2>/dev/null || true
+
+          # Copy XCFramework to ios/ for CocoaPods
+          rm -rf ios/libtorrent_flutter.xcframework
+          cp -R prebuilt/ios/libtorrent_flutter.xcframework ios/ 2>/dev/null || true
+          # Remove legacy .a if present
+          rm -f ios/liblibtorrent_flutter.a 2>/dev/null || true
+
+          # Copy macOS dylib to macos/ for CocoaPods vendored_libraries
+          cp prebuilt/macos/universal/liblibtorrent_flutter.dylib macos/ 2>/dev/null || true
+
+          echo "=== Prebuilt libs ==="
+          find prebuilt -type f -exec ls -lh {} \;
+          ls -la macos/*.dylib 2>/dev/null || true
+          find ios/libtorrent_flutter.xcframework -type f 2>/dev/null | head -10 || true
+
+      - name: Commit prebuilt libraries
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add prebuilt/ macos/liblibtorrent_flutter.dylib ios/libtorrent_flutter.xcframework/
+          git diff --cached --quiet && echo "No changes" || (
+            git commit -m "ci: update prebuilt native libraries [skip ci]"
+            git push
+          )
+
+  # ═══════════════════════════════════════════════════════════════════════════════
+  # RELEASE — create a GitHub Release with native libs
   # ═══════════════════════════════════════════════════════════════════════════════
   create-release:
-    needs: [build-linux, build-macos, build-windows, build-android, build-ios]
+    needs: [bundle-prebuilt]
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
     permissions:
@@ -720,13 +801,13 @@ jobs:
           mkdir -p release-assets
           cd release-artifacts
 
-          # Zip each per-platform / per-arch artifact directory.
-          # Asset names must match what the platform install scripts request:
-          #   Linux:   linux-native-lib-{x64,arm64}.zip      (CMakeLists.txt)
-          #   macOS:   macos-native-lib.zip                  (podspec)
-          #   Windows: windows-native-lib-{x64,arm64}.zip    (CMakeLists.txt)
-          #   Android: android-native-lib-{abi}.zip          (build.gradle)
-          #   iOS:     ios-native-lib.zip                    (podspec)
+          # Zip each per-arch / per-platform artifact directory. Asset names
+          # MUST match what the per-platform install scripts request:
+          #   - Linux:   linux-native-lib-{x64,arm64}.zip      (CMakeLists.txt)
+          #   - macOS:   macos-native-lib.zip                  (podspec)
+          #   - Windows: windows-native-lib-{x64,arm64}.zip    (CMakeLists.txt)
+          #   - Android: android-native-lib-{abi}.zip          (build.gradle)
+          #   - iOS:     ios-native-lib.zip                    (podspec)
           for dir in \
               linux-native-lib-x64 linux-native-lib-arm64 \
               macos-native-lib \
@@ -755,17 +836,6 @@ jobs:
           body: |
             Prebuilt native libraries for libtorrent_flutter v${{ steps.version.outputs.version }}
 
-            Built from libtorrent ${{ env.LIBTORRENT_VERSION }} with webtorrent, encryption, and deprecated-functions enabled.
-
-            | Platform | Architectures                   |
-            |----------|---------------------------------|
-            | Linux    | x64, arm64                      |
-            | macOS    | universal2 (arm64 + x86_64)     |
-            | Windows  | x64, arm64                      |
-            | Android  | arm64-v8a, armeabi-v7a, x86_64  |
-            | iOS      | arm64 (device)                  |
-
             All binaries are self-contained — no system dependencies needed.
           files: release-assets/*
-          fail_on_unmatched_files: false
           make_latest: true

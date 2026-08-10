@@ -111,9 +111,10 @@ typedef struct {
 typedef void (*lt_alert_callback)(int alert_type, lt_torrent_id id,
                                   const char* message, void* user_data);
 
-/* session */
 /* Android/OpenSSL trust-store setup. Call before lt_create_session(). */
 TORRENT_API void lt_set_ssl_cert_path(const char* path);
+
+/* session */
 TORRENT_API lt_session_t lt_create_session(const char* listen_interface,
                                            int download_limit,
                                            int upload_limit);

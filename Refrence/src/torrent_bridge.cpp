@@ -98,18 +98,9 @@ static std::mutex g_log_mu;
 
 static void tb_log_init() {
     if (!g_logfile) {
-#ifdef _WIN32
-        char tmp[MAX_PATH];
-        GetTempPathA(MAX_PATH, tmp);
-        std::string path = std::string(tmp) + "torrent_bridge.log";
-        g_logfile = fopen(path.c_str(), "w");
-#elif defined(__ANDROID__)
-        g_logfile = nullptr; // Android uses __android_log_print instead
-#else
-        g_logfile = fopen("/tmp/torrent_bridge.log", "w");
-#endif
+        g_logfile = fopen("C:\\Users\\Ayman\\Desktop\\torrent_debug.log", "w");
         if (g_logfile) {
-            setvbuf(g_logfile, nullptr, _IONBF, 0);
+            setvbuf(g_logfile, nullptr, _IONBF, 0); // unbuffered
         }
     }
 }
@@ -1128,7 +1119,7 @@ struct SessionWrapper {
                                 try {
                                     auto ti = mra->handle.torrent_file();
                                     if (ti) {
-                                        int nf = ti->files().num_files();
+                                        int nf = ti->num_files();
                                         std::vector<lt::download_priority_t> p(
                                             (size_t)nf, lt::dont_download);
                                         mra->handle.prioritize_files(p);
@@ -1148,6 +1139,10 @@ struct SessionWrapper {
                             if (dart_queue.size() < 2048)
                                 dart_queue.push_back({a->type(), tid, a->message()});
                         }
+
+#ifdef __ANDROID__
+                        __android_log_print(ANDROID_LOG_DEBUG, "libtorrent_native", "%s", a->message().c_str());
+#endif
 
                         {
                             std::lock_guard<std::mutex> cl(cb_mu);
@@ -1642,7 +1637,7 @@ static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
             // get filename — port of stream.go MIME detection
             std::string filename = "video.mp4";
             if (s->ti) {
-                try { filename = s->ti->files().file_name(lt::file_index_t{s->file_index}).to_string(); }
+                try { filename = std::string(s->ti->orig_files().file_name(lt::file_index_t{s->file_index})); }
                 catch (...) {}
             }
 
@@ -1875,6 +1870,9 @@ TORRENT_API void lt_set_ssl_cert_path(const char* path) {
 #ifdef __ANDROID__
     if (path && *path) {
         setenv("SSL_CERT_FILE", path, 1);
+        // Do not point SSL_CERT_DIR at Android's platform directory. Modern
+        // Android versions may restrict it, and OpenSSL requires a correctly
+        // hashed directory layout. The bundled PEM file is deterministic.
         unsetenv("SSL_CERT_DIR");
         __android_log_print(
             ANDROID_LOG_INFO,
@@ -1894,6 +1892,7 @@ TORRENT_API lt_session_t lt_create_session(const char* iface, int dl, int ul) {
         // allowing every wss:// tracker to time out ambiguously.
         validate_android_ca_bundle();
 #endif
+
         lt::settings_pack sp;
 
         // alert categories
@@ -1904,16 +1903,19 @@ TORRENT_API lt_session_t lt_create_session(const char* iface, int dl, int ul) {
             | lt::alert_category::piece_progress
             | lt::alert_category::tracker
             | lt::alert_category::peer
-            | lt::alert_category::dht);
+            | lt::alert_category::port_mapping
+            | lt::alert_category::dht
+            | lt::alert_category::session_log);
 
         sp.set_str(lt::settings_pack::listen_interfaces,
-            (iface && *iface) ? iface : "0.0.0.0:0,[::]:0");
+            (iface && *iface) ? iface : "0.0.0.0:6881,[::]:6881");
 
         if (dl > 0) sp.set_int(lt::settings_pack::download_rate_limit, dl);
         if (ul > 0) sp.set_int(lt::settings_pack::upload_rate_limit,   ul);
 
 #ifdef __ANDROID__
-        // Keep TLS verification enabled — the bundled CA file makes wss:// trackers work.
+        // Keep TLS verification enabled. The bundled CA file above makes this
+        // work without weakening wss:// / HTTPS tracker security.
         sp.set_bool(lt::settings_pack::validate_https_trackers, true);
 #endif
 
@@ -2311,14 +2313,14 @@ TORRENT_API int lt_get_files(lt_session_t session, lt_torrent_id id,
     try {
         auto ti = it->second.torrent_file();
         if (!ti) return 0;
-        const lt::file_storage& fs = ti->files();
+        const lt::file_storage& fs = ti->orig_files();
         int n = 0;
         for (int i = 0; i < fs.num_files() && n < max; ++i, ++n) {
             lt::file_index_t fi{i};
             out[n].index = i;
             out[n].size  = fs.file_size(fi);
-            out[n].is_streamable = is_streamable(fs.file_name(fi).to_string()) ? 1 : 0;
-            std::string nm = fs.file_name(fi).to_string();
+            out[n].is_streamable = is_streamable(std::string(fs.file_name(fi))) ? 1 : 0;
+            std::string nm(fs.file_name(fi));
             std::string pt = fs.file_path(fi);
             std::strncpy(out[n].name, nm.c_str(), sizeof(out[n].name) - 1);
             std::strncpy(out[n].path, pt.c_str(), sizeof(out[n].path) - 1);
@@ -2339,7 +2341,7 @@ TORRENT_API void lt_set_file_priorities(lt_session_t session, lt_torrent_id id,
     try {
         auto ti = it->second.torrent_file();
         if (!ti) return;
-        int nf = ti->files().num_files();
+        int nf = ti->num_files();
         std::vector<lt::download_priority_t> p;
         p.reserve(nf);
         for (int i = 0; i < nf; ++i)
@@ -2370,14 +2372,14 @@ TORRENT_API lt_stream_id lt_start_stream(lt_session_t session,
 
     auto ti = handle.torrent_file();
     if (!ti) { set_err("no metadata yet"); return -1; }
-    const lt::file_storage& fs = ti->files();
+    const lt::file_storage& fs = ti->orig_files();
 
     // auto-select largest streamable file
     if (file_index < 0) {
         int64_t best = -1; file_index = 0;
         for (int i = 0; i < fs.num_files(); ++i) {
             int64_t sz = fs.file_size(lt::file_index_t{i});
-            if (sz > best && is_streamable(fs.file_name(lt::file_index_t{i}).to_string())) {
+            if (sz > best && is_streamable(std::string(fs.file_name(lt::file_index_t{i})))) {
                 best = sz; file_index = i;
             }
         }
@@ -2603,7 +2605,7 @@ TORRENT_API void lt_stop_stream(lt_session_t session, lt_stream_id sid) {
         try {
             auto ti2 = stream->handle.torrent_file();
             if (ti2) {
-                int nf = ti2->files().num_files();
+                int nf = ti2->num_files();
                 std::vector<lt::download_priority_t> p((size_t)nf, lt::default_priority);
                 stream->handle.prioritize_files(p);
             }
