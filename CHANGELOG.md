@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.3
+
+- **Upgraded libtorrent to v2.1.1**: Engine updated to libtorrent v2.1.1 baseline with WebTorrent support (`webtorrent=ON`), OpenSSL 3.2.1, and deprecated functions enabled.
+- **WebTorrent support**: Includes embedded `libdatachannel`, `libjuice`, and `usrsctp` WebRTC dependencies across Linux (x64/arm64), macOS (universal2), Windows (x64/arm64), Android (arm64/v7a/x86_64), and iOS (arm64 XCFramework).
+- **C++17 Compatibility**: Replaced non-standard `std::string_view.to_string()` calls with C++17 `std::string(sv)` constructors in `torrent_bridge.cpp`, fixing build failures on Clang/GCC (iOS, macOS, Linux, Android).
+
 ## 1.9.2
 
 - Reverted to stable libtorrent 1.8.5 baseline (stability and CI fixes).
