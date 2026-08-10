@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.9.4
+
+- **Fix Windows & Linux Prebuilt Extraction Path**: Fixed `windows/CMakeLists.txt` and `linux/CMakeLists.txt` extraction paths so prebuilt zip assets unpack directly into the architecture subfolder (`prebuilt/windows/x64/` and `prebuilt/linux/x64/`), resolving the `FindLibtorrentRasterbar.cmake` fallback build error.
+- **WebTorrent & OpenSSL Integration**: Confirmed full WebTorrent (`webtorrent=ON`) and Mozilla CA root certificate bundle support across Windows, Linux, macOS, iOS, and Android.
+
 ## 1.9.3
 
 - **Upgraded libtorrent to v2.1.1**: Engine updated to libtorrent v2.1.1 baseline with WebTorrent support (`webtorrent=ON`), OpenSSL 3.2.1, and deprecated functions enabled.

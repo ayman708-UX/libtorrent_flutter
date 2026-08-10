@@ -37,10 +37,10 @@ if(NOT EXISTS "${PREBUILT_DLL}" AND NOT LIBTORRENT_FLUTTER_SKIP_DOWNLOAD)
       file(DOWNLOAD "${_DL_URL}" "${_ZIP}" SHOW_PROGRESS STATUS _DL_STATUS TLS_VERIFY ON)
       list(GET _DL_STATUS 0 _DL_CODE)
       if(_DL_CODE EQUAL 0)
-        file(MAKE_DIRECTORY "${PREBUILT_DIR}")
+        file(MAKE_DIRECTORY "${PREBUILT_DIR}/${LTF_WINDOWS_ARCH}")
         execute_process(
           COMMAND "${CMAKE_COMMAND}" -E tar xf "${_ZIP}"
-          WORKING_DIRECTORY "${PREBUILT_DIR}"
+          WORKING_DIRECTORY "${PREBUILT_DIR}/${LTF_WINDOWS_ARCH}"
           RESULT_VARIABLE _UNZIP_RC
         )
         file(REMOVE "${_ZIP}")
@@ -52,11 +52,16 @@ if(NOT EXISTS "${PREBUILT_DLL}" AND NOT LIBTORRENT_FLUTTER_SKIP_DOWNLOAD)
       endif()
     endif()
   endif()
+if(NOT EXISTS "${PREBUILT_DLL}" AND EXISTS "${PREBUILT_DIR}/libtorrent_flutter.dll")
+  set(PREBUILT_DLL "${PREBUILT_DIR}/libtorrent_flutter.dll")
+  set(PREBUILT_SEARCH_PATH "${PREBUILT_DIR}/*.dll")
+else()
+  set(PREBUILT_SEARCH_PATH "${PREBUILT_DIR}/${LTF_WINDOWS_ARCH}/*.dll")
 endif()
 
 if(EXISTS "${PREBUILT_DLL}")
-  message(STATUS "Using prebuilt Windows ${LTF_WINDOWS_ARCH} native library")
-  file(GLOB PREBUILT_DEPS "${PREBUILT_DIR}/${LTF_WINDOWS_ARCH}/*.dll")
+  message(STATUS "Using prebuilt Windows native library from ${PREBUILT_DLL}")
+  file(GLOB PREBUILT_DEPS "${PREBUILT_SEARCH_PATH}")
   set(libtorrent_flutter_bundled_libraries
     ${PREBUILT_DEPS}
     PARENT_SCOPE
