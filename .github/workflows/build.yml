@@ -2,7 +2,7 @@ name: Build Native Libraries
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, testnewlibtorrent, "temp-build-*"]
   pull_request:
     branches: [main, master]
   workflow_dispatch:
@@ -302,8 +302,7 @@ jobs:
         run: |
           $uri = "https://archives.boost.io/release/$env:BOOST_VERSION/source/$env:BOOST_DIR.tar.gz"
           Invoke-WebRequest -Uri $uri -OutFile boost.tar.gz
-          7z x boost.tar.gz
-          7z x "$env:BOOST_DIR.tar"
+          tar xf boost.tar.gz
           echo "BOOST_ROOT=$env:GITHUB_WORKSPACE\$env:BOOST_DIR" >> $env:GITHUB_ENV
 
       - name: Build OpenSSL from source
