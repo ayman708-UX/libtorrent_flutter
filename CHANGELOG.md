@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.5
+
+- **Fix Windows CMake Flow Control Syntax**: Fixed missing `endif()` in `windows/CMakeLists.txt` flow control structure for clean, error-free CMake generation on Windows.
+
 ## 1.9.4
 
 - **Fix Windows & Linux Prebuilt Extraction Path**: Fixed `windows/CMakeLists.txt` and `linux/CMakeLists.txt` extraction paths so prebuilt zip assets unpack directly into the architecture subfolder (`prebuilt/windows/x64/` and `prebuilt/linux/x64/`), resolving the `FindLibtorrentRasterbar.cmake` fallback build error.

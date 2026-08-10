@@ -52,6 +52,8 @@ if(NOT EXISTS "${PREBUILT_DLL}" AND NOT LIBTORRENT_FLUTTER_SKIP_DOWNLOAD)
       endif()
     endif()
   endif()
+endif()
+
 if(NOT EXISTS "${PREBUILT_DLL}" AND EXISTS "${PREBUILT_DIR}/libtorrent_flutter.dll")
   set(PREBUILT_DLL "${PREBUILT_DIR}/libtorrent_flutter.dll")
   set(PREBUILT_SEARCH_PATH "${PREBUILT_DIR}/*.dll")

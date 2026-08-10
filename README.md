@@ -4,7 +4,7 @@ The only Flutter package wrapping **libtorrent 2.1.1** (with WebTorrent support)
 
 ```yaml
 dependencies:
-  libtorrent_flutter: ^1.9.4
+  libtorrent_flutter: ^1.9.5
 ```
 
 > **First build downloads ~10–80 MB of native binaries** from the matching
