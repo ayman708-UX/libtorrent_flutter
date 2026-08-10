@@ -282,7 +282,7 @@ jobs:
             cmake_arch: x64
             msvc_arch: x64
             ossl_target: VC-WIN64A
-            ossl_no_asm: ""
+            ossl_no_asm: "no-asm"
           - arch: arm64
             cmake_arch: ARM64
             msvc_arch: x64_arm64
