@@ -1,10 +1,10 @@
 # libtorrent_flutter
 
-The only Flutter package wrapping **libtorrent 2.1.1** (with WebTorrent support) — the same C++ engine powering qBittorrent, Deluge, and Transmission. Add a magnet link, pick a file, get a stream URL. Works on Windows, Linux, macOS, iOS, and Android — prebuilt native binaries are fetched on first build from the matching GitHub Release.
+The only Flutter package wrapping **libtorrent 2.1.1** — the same C++ engine powering qBittorrent, Deluge, and Transmission. Add a magnet link, pick a file, get a stream URL. Works on Windows, Linux, macOS, iOS, and Android — prebuilt native binaries are fetched on first build from the matching GitHub Release.
 
 ```yaml
 dependencies:
-  libtorrent_flutter: ^1.9.5
+  libtorrent_flutter: ^1.9.6
 ```
 
 > **First build downloads ~10–80 MB of native binaries** from the matching

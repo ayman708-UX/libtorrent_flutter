@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.6
+
+- **Disabled WebTorrent (`webtorrent=OFF`)**: Disabled WebTorrent build flag across all platforms (Android, Windows, Linux, macOS, iOS) for max engine stability and smaller binary footprint.
+
 ## 1.9.5
 
 - **Fix Windows CMake Flow Control Syntax**: Fixed missing `endif()` in `windows/CMakeLists.txt` flow control structure for clean, error-free CMake generation on Windows.

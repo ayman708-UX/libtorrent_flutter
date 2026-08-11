@@ -38,7 +38,7 @@ jobs:
             cmake g++ ninja-build pkg-config \
             libgtk-3-dev xvfb
 
-      - name: Build libtorrent (static, webtorrent=ON)
+      - name: Build libtorrent (static, webtorrent=OFF)
         run: |
           git clone --depth 1 --branch $LIBTORRENT_VERSION \
             --recurse-submodules https://github.com/arvidn/libtorrent.git libtorrent-src
@@ -49,16 +49,12 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             -Ddeprecated-functions=ON \
             -Dencryption=ON \
-            -Dwebtorrent=ON \
+            -Dwebtorrent=OFF \
             -G Ninja -Wno-dev
           ninja -j$(nproc)
           echo "=== Verifying webtorrent ==="
-          grep -E '^webtorrent:BOOL=ON$' CMakeCache.txt
-          echo "=== Verifying datachannel deps ==="
-          test -f deps/libdatachannel/libdatachannel-static.a
-          test -f deps/libdatachannel/deps/libjuice/libjuice-static.a
-          test -f deps/libdatachannel/deps/usrsctp/usrsctplib/libusrsctp.a
-          echo "✅ libtorrent with webtorrent built successfully"
+          grep -E '^webtorrent:BOOL=OFF$' CMakeCache.txt
+          echo "✅ libtorrent built successfully"
         timeout-minutes: 40
 
       - name: Build torrent_bridge (fully self-contained)
@@ -84,9 +80,6 @@ jobs:
             -o build-linux/liblibtorrent_flutter.so \
             src/torrent_bridge.cpp \
             -Wl,--whole-archive "$LT_LIB" -Wl,--no-whole-archive \
-            libtorrent-src/build/deps/libdatachannel/libdatachannel-static.a \
-            libtorrent-src/build/deps/libdatachannel/deps/libjuice/libjuice-static.a \
-            libtorrent-src/build/deps/libdatachannel/deps/usrsctp/usrsctplib/libusrsctp.a \
             -Wl,-Bstatic -l:libssl.a -l:libcrypto.a -Wl,-Bdynamic \
             -lpthread -ldl
 
@@ -190,7 +183,7 @@ jobs:
                 -DBUILD_SHARED_LIBS=OFF \
                 -Ddeprecated-functions=ON \
                 -Dencryption=ON \
-                -Dwebtorrent=ON \
+                -Dwebtorrent=OFF \
                 -DOPENSSL_ROOT_DIR="${ossl_root}" \
                 -DOPENSSL_INCLUDE_DIR="${ossl_root}/include" \
                 -DOPENSSL_CRYPTO_LIBRARY="${ossl_root}/lib/libcrypto.a" \
@@ -201,8 +194,7 @@ jobs:
                 -G Ninja -Wno-dev
               ninja -j$(sysctl -n hw.ncpu)
               echo "=== Verifying webtorrent (${arch}) ==="
-              grep -E '^webtorrent:BOOL=ON$' CMakeCache.txt
-              test -f deps/libdatachannel/libdatachannel-static.a
+              grep -E '^webtorrent:BOOL=OFF$' CMakeCache.txt
             )
 
             local lt_lib
@@ -225,9 +217,6 @@ jobs:
               -o "${out_dir}/liblibtorrent_flutter.dylib" \
               src/torrent_bridge.cpp \
               -Wl,-force_load,"${lt_lib}" \
-              -Wl,-force_load,"${slice_dir}/deps/libdatachannel/libdatachannel-static.a" \
-              -Wl,-force_load,"${slice_dir}/deps/libdatachannel/deps/libjuice/libjuice-static.a" \
-              -Wl,-force_load,"${slice_dir}/deps/libdatachannel/deps/usrsctp/usrsctplib/libusrsctp.a" \
               -Wl,-force_load,"${ossl_root}/lib/libssl.a" \
               -Wl,-force_load,"${ossl_root}/lib/libcrypto.a" \
               -framework CoreFoundation -framework SystemConfiguration \
@@ -335,7 +324,7 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF `
             -Ddeprecated-functions=ON `
             -Dencryption=ON `
-            -Dwebtorrent=ON `
+            -Dwebtorrent=OFF `
             -DOPENSSL_ROOT_DIR="$env:OPENSSL_ROOT" `
             -DBOOST_ROOT="$env:BOOST_ROOT" `
             -DBoost_INCLUDE_DIR="$env:BOOST_ROOT" `
@@ -343,22 +332,9 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE\libtorrent-install"
           cmake --build . --config Release --target install -j4
           Write-Host "=== Verifying webtorrent ==="
-          Select-String "^webtorrent:BOOL=ON" CMakeCache.txt
+          Select-String "^webtorrent:BOOL=OFF" CMakeCache.txt
           Pop-Location
         timeout-minutes: 120
-
-      - name: Find webtorrent dependencies
-        shell: pwsh
-        run: |
-          $DC_LIB = (Get-ChildItem -Recurse -Path "libtorrent-src\build\deps" -Filter "datachannel-static.lib" | Select-Object -First 1).FullName
-          $JUICE_LIB = (Get-ChildItem -Recurse -Path "libtorrent-src\build\deps" -Filter "juice-static.lib" | Select-Object -First 1).FullName
-          $USRSCTP_LIB = (Get-ChildItem -Recurse -Path "libtorrent-src\build\deps" -Filter "usrsctp.lib" | Select-Object -First 1).FullName
-          Write-Host "DC_LIB:     $DC_LIB"
-          Write-Host "JUICE_LIB:  $JUICE_LIB"
-          Write-Host "USRSCTP_LIB: $USRSCTP_LIB"
-          echo "DC_LIB=$DC_LIB" >> $env:GITHUB_ENV
-          echo "JUICE_LIB=$JUICE_LIB" >> $env:GITHUB_ENV
-          echo "USRSCTP_LIB=$USRSCTP_LIB" >> $env:GITHUB_ENV
 
       - name: Build bridge DLL
         shell: pwsh
@@ -370,10 +346,7 @@ jobs:
             -DCMAKE_PREFIX_PATH="$env:GITHUB_WORKSPACE\libtorrent-install" `
             -DOPENSSL_ROOT_DIR="$env:OPENSSL_ROOT" `
             -DBoost_INCLUDE_DIR="$env:BOOST_ROOT" `
-            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
-            -DWEBTORRENT_DATACHANNEL_LIB="$env:DC_LIB" `
-            -DWEBTORRENT_JUICE_LIB="$env:JUICE_LIB" `
-            -DWEBTORRENT_USRSCTP_LIB="$env:USRSCTP_LIB"
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
           cmake --build . --config Release
           Pop-Location
 
@@ -482,7 +455,7 @@ jobs:
             -Dstatic_runtime=ON \
             -Ddeprecated-functions=ON \
             -Dencryption=ON \
-            -Dwebtorrent=ON \
+            -Dwebtorrent=OFF \
             -DOPENSSL_ROOT_DIR=$OPENSSL_ROOT \
             -DOPENSSL_INCLUDE_DIR=$OPENSSL_ROOT/include \
             -DOPENSSL_CRYPTO_LIBRARY=$OSSL_LIB_DIR/libcrypto.a \
@@ -493,8 +466,7 @@ jobs:
             -Wno-dev
           ninja -j$(nproc)
           echo "=== Verifying webtorrent ==="
-          grep -E '^webtorrent:BOOL=ON$' CMakeCache.txt
-          test -f deps/libdatachannel/libdatachannel-static.a
+          grep -E '^webtorrent:BOOL=OFF$' CMakeCache.txt
           echo "✅ Android ${{ matrix.abi }} libtorrent built"
         timeout-minutes: 45
 
@@ -519,13 +491,6 @@ jobs:
             OSSL_LIB_DIR="$OPENSSL_ROOT/lib"
           fi
 
-          DC_LIB=$(find $LT_BUILD_DIR/deps -name "libdatachannel-static.a" | head -1)
-          JUICE_LIB=$(find $LT_BUILD_DIR/deps -name "libjuice-static.a" | head -1)
-          USRSCTP_LIB=$(find $LT_BUILD_DIR/deps -name "libusrsctp.a" | head -1)
-          echo "DC_LIB:      $DC_LIB"
-          echo "JUICE_LIB:   $JUICE_LIB"
-          echo "USRSCTP_LIB: $USRSCTP_LIB"
-
           mkdir -p build-bridge && cd build-bridge
 
           $NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++ \
@@ -542,7 +507,6 @@ jobs:
             -o liblibtorrent_flutter.so \
             ../src/torrent_bridge.cpp \
             -Wl,--whole-archive $LT_LIB -Wl,--no-whole-archive \
-            $DC_LIB $JUICE_LIB $USRSCTP_LIB \
             $OSSL_LIB_DIR/libssl.a $OSSL_LIB_DIR/libcrypto.a \
             -llog \
             -static-libstdc++
@@ -619,7 +583,7 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             -Ddeprecated-functions=ON \
             -Dencryption=ON \
-            -Dwebtorrent=ON \
+            -Dwebtorrent=OFF \
             -DOPENSSL_ROOT_DIR="$OSSL_IOS_ROOT" \
             -DOPENSSL_INCLUDE_DIR="$OSSL_IOS_ROOT/include" \
             -DOPENSSL_CRYPTO_LIBRARY="$OSSL_IOS_ROOT/lib/libcrypto.a" \
@@ -630,8 +594,7 @@ jobs:
             -G Ninja -Wno-dev
           ninja -j$(sysctl -n hw.ncpu)
           echo "=== Verifying webtorrent ==="
-          grep -E '^webtorrent:BOOL=ON$' CMakeCache.txt
-          test -f deps/libdatachannel/libdatachannel-static.a
+          grep -E '^webtorrent:BOOL=OFF$' CMakeCache.txt
           echo "=== iOS arm64 static libs ==="
           find . -name "*.a" | head -10
         timeout-minutes: 40
@@ -658,18 +621,13 @@ jobs:
             -o build-ios-arm64/torrent_bridge.o \
             src/torrent_bridge.cpp
 
-          # Collect all webtorrent dependency static libs (datachannel, libjuice, usrsctp)
-          DC_LIBS=$(find libtorrent-src/build-ios/deps -name "*.a" | tr '\n' ' ')
-          echo "Datachannel libs: $DC_LIBS"
-
-          # Merge bridge object + libtorrent + OpenSSL + datachannel deps into one .a
+          # Merge bridge object + libtorrent + OpenSSL into one .a
           libtool -static \
             -o build-ios-arm64/liblibtorrent_flutter.a \
             build-ios-arm64/torrent_bridge.o \
             "$LT_LIB" \
             "${OSSL_IOS_ROOT}/lib/libssl.a" \
-            "${OSSL_IOS_ROOT}/lib/libcrypto.a" \
-            $DC_LIBS
+            "${OSSL_IOS_ROOT}/lib/libcrypto.a"
 
           ls -la build-ios-arm64/liblibtorrent_flutter.a
           echo "✅ iOS arm64 static build succeeded"
@@ -754,7 +712,7 @@ jobs:
           body: |
             Prebuilt native libraries for libtorrent_flutter v${{ steps.version.outputs.version }}
 
-            Built from libtorrent ${{ env.LIBTORRENT_VERSION }} with webtorrent, encryption, and deprecated-functions enabled.
+            Built from libtorrent ${{ env.LIBTORRENT_VERSION }} with encryption and deprecated-functions enabled.
 
             | Platform | Architectures                   |
             |----------|---------------------------------|
