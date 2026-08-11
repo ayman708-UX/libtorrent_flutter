@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.8
+
+- **Fix Android ARM64 SIGSEGV in `lt_start_stream`**: Added `has_metadata` and `pieces.empty()` guards before `ts.pieces.get_bit()` in the streaming startup path. On Android ARM64, calling `handle.status(query_pieces)` immediately after `handle.resume()` can return a bitfield with null internal buffer, causing a null pointer dereference at fault address `0x4`.
+
 ## 1.9.7
 
 - **Fix Android ARM64 SIGSEGV Crash**: Added null/metadata guards for `st.pieces` bitfield access in `fill_status` and separated array index post-increments in `lt_get_all_statuses` to prevent SIGSEGV memory faults on Android ARM64.

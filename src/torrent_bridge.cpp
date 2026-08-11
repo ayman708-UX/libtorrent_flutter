@@ -2516,6 +2516,9 @@ TORRENT_API lt_stream_id lt_start_stream(lt_session_t session,
         // Only load nearby pieces into RAM cache (head + tail).
         // Loading ALL pieces would flood I/O and fill the cache budget.
         lt::torrent_status ts = handle.status(lt::torrent_handle::query_pieces);
+        // Guard: on Android ARM64, pieces bitfield can have null internal
+        // buffer immediately after resume() — get_bit() would SIGSEGV.
+        if (ts.has_metadata && !ts.pieces.empty() && ts.pieces.size() > 0)
         for (int p = s->start_piece; p <= s->end_piece; ++p) {
             if (ts.pieces.get_bit(lt::piece_index_t(p))) {
                 s->pieces_have.insert(p);
