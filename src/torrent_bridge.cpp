@@ -952,26 +952,35 @@ struct StreamEngine {
     void on_piece_read(int p, const char* data, int size, bool ok) {
         TB_LOG("on_piece_read: piece=%d ok=%d size=%d", p, (int)ok, size);
 
+        // Copy from the alert's data pointer exactly ONCE into a local vector.
+        // On Android ARM64 with MTE, the alert buffer can be re-tagged by
+        // libtorrent's internal pool between two separate memcpy passes,
+        // causing SEGV_ACCERR on the second access.
+        std::vector<char> safe_copy;
+        if (ok && data && size > 0) {
+            safe_copy.assign(data, data + size);
+        }
+
         // Store result for read_piece_data() consumers
         {
             std::lock_guard<std::mutex> lk(read_mu);
             ReadResult r;
-            if (ok && data && size > 0) {
-                r.data.assign(data, data + size);
+            if (!safe_copy.empty()) {
+                r.data = safe_copy;  // copy from our safe local
                 r.ok = true;
             }
             read_results[p] = std::move(r);
         }
 
-        // Populate hot piece cache — instant re-reads for player probes,
-        // overlapping range requests, and small backward seeks
-        if (ok && data && size > 0 && cache) {
+        // Populate hot piece cache from our safe copy — instant re-reads for
+        // player probes, overlapping range requests, and small backward seeks
+        if (!safe_copy.empty() && cache) {
             auto* cp = cache->get_piece(p);
             if (cp) {
                 std::unique_lock<std::shared_mutex> lk(cp->mu);
                 if (cp->buffer.empty()) {
-                    cp->buffer.assign(data, data + size);
-                    cp->size = (int64_t)size;
+                    cp->buffer = std::move(safe_copy);  // move into cache (zero-copy)
+                    cp->size = (int64_t)cp->buffer.size();
                     cp->complete = true;
                     cp->accessed = TorrReader::now_unix();
                 }
@@ -1486,7 +1495,11 @@ static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
     try {
 
     // Create reader for this connection — port of t.NewReader(file)
-    TorrReader* reader = s->cache->new_reader(
+    // NOTE: assigns to the OUTER reader variable (line 1485) so that
+    // close_reader at cleanup: actually frees it. The previous code
+    // re-declared `TorrReader* reader` here, shadowing the outer one,
+    // so close_reader always received nullptr → TorrReader leaked.
+    reader = s->cache->new_reader(
         reader_id, s->file_index, s->file_offset, s->file_size);
 
     // port of: reader.SetResponsive() — set readahead to 16MB (TorrServer's updateRA)

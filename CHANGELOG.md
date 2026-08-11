@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.9.9
+
+- **Fix Android ARM64 SEGV_ACCERR use-after-free in streaming**: `on_piece_read` now copies from libtorrent's alert buffer exactly once into a local vector, then populates both `read_results` and the piece cache from that safe copy. Previously it read the alert's `data` pointer twice — Android MTE detected the second access as a use-after-free (`SEGV_ACCERR`).
+- **Fix TorrReader leak in `handle_connection`**: Removed shadowed `TorrReader* reader` re-declaration that prevented `close_reader` from ever being called, leaking every TorrReader created per HTTP connection.
+
 ## 1.9.8
 
 - **Fix Android ARM64 SIGSEGV in `lt_start_stream`**: Added `has_metadata` and `pieces.empty()` guards before `ts.pieces.get_bit()` in the streaming startup path. On Android ARM64, calling `handle.status(query_pieces)` immediately after `handle.resume()` can return a bitfield with null internal buffer, causing a null pointer dereference at fault address `0x4`.
