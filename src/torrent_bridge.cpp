@@ -234,8 +234,14 @@ static void fill_status(lt_torrent_status& out, int64_t id,
     out.num_pieces    = (int32_t)st.num_pieces;
 
     int have = 0;
-    for (int i = 0; i < (int)st.pieces.size(); ++i)
-        if (st.pieces.get_bit(lt::piece_index_t(i))) have++;
+    if (st.has_metadata && !st.pieces.empty() && st.pieces.size() > 0) {
+        int sz = static_cast<int>(st.pieces.size());
+        for (int i = 0; i < sz; ++i) {
+            try {
+                if (st.pieces.get_bit(lt::piece_index_t(i))) have++;
+            } catch (...) { break; }
+        }
+    }
     out.pieces_done = (int32_t)have;
 
     out.is_paused   = (st.flags & lt::torrent_flags::paused) ? 1 : 0;
@@ -2272,8 +2278,11 @@ TORRENT_API int lt_get_all_statuses(lt_session_t session,
     for (auto& kv : sw->handles) {
         if (n >= max) break;
         if (!kv.second.is_valid()) continue;
-        try { fill_status(out[n++], kv.first,
-              kv.second.status(lt::torrent_handle::query_pieces)); } catch (...) {}
+        try {
+            lt::torrent_status st = kv.second.status(lt::torrent_handle::query_pieces);
+            fill_status(out[n], kv.first, st);
+            n++;
+        } catch (...) {}
     }
     return n;
 }

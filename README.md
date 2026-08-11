@@ -4,7 +4,7 @@ The only Flutter package wrapping **libtorrent 2.1.1** — the same C++ engine p
 
 ```yaml
 dependencies:
-  libtorrent_flutter: ^1.9.6
+  libtorrent_flutter: ^1.9.7
 ```
 
 > **First build downloads ~10–80 MB of native binaries** from the matching

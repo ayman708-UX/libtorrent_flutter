@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.7
+
+- **Fix Android ARM64 SIGSEGV Crash**: Added null/metadata guards for `st.pieces` bitfield access in `fill_status` and separated array index post-increments in `lt_get_all_statuses` to prevent SIGSEGV memory faults on Android ARM64.
+
 ## 1.9.6
 
 - **Disabled WebTorrent (`webtorrent=OFF`)**: Disabled WebTorrent build flag across all platforms (Android, Windows, Linux, macOS, iOS) for max engine stability and smaller binary footprint.
