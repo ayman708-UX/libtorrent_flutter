@@ -497,6 +497,7 @@ jobs:
             --target=$TARGET \
             -shared -fPIC -O3 -std=c++17 \
             -flto \
+            -Wl,-z,max-page-size=16384 \
             -DTORRENT_BRIDGE_EXPORTS \
             -DTORRENT_USE_OPENSSL \
             -DBOOST_NO_IOSTREAM \

@@ -30,6 +30,7 @@
 #endif
 
 #include <libtorrent/session.hpp>
+#include <libtorrent/session_params.hpp>
 #include <libtorrent/settings_pack.hpp>
 #include <libtorrent/add_torrent_params.hpp>
 #include <libtorrent/torrent_handle.hpp>
@@ -41,6 +42,8 @@
 #include <libtorrent/version.hpp>
 #include <libtorrent/file_storage.hpp>
 #include <libtorrent/download_priority.hpp>
+#include <libtorrent/mmap_disk_io.hpp>
+#include <libtorrent/posix_disk_io.hpp>
 
 // ── cross-platform sockets ──────────────────────────────────────────────────────
 #ifdef _WIN32
@@ -209,6 +212,7 @@ static std::string get_mime(const std::string& name) {
     if (e == ".aac")  return "audio/aac";
     if (e == ".ogg" || e == ".opus") return "audio/ogg";
     if (e == ".wav")  return "audio/wav";
+    if (e == ".m4a" || e == ".m4b" || e == ".m4p") return "audio/mp4";
     return "application/octet-stream";
 }
 
@@ -1042,6 +1046,7 @@ struct SessionWrapper {
     std::deque<AlertRecord> dart_queue;
 
     explicit SessionWrapper(lt::settings_pack sp) : session(std::move(sp)) {}
+    explicit SessionWrapper(lt::session_params params) : session(std::move(params)) {}
 
     // ── TorrServer config — port of settings.BTSets (session-level defaults) ──
     lt_bt_config bt_config;
@@ -1266,6 +1271,7 @@ struct RangeReq {
     int64_t start = -1;
     int64_t end   = -1;
     bool    valid = false;
+    bool    is_suffix = false;
 };
 
 static RangeReq parse_range(const char* buf, int len) {
@@ -1285,8 +1291,14 @@ static RangeReq parse_range(const char* buf, int len) {
     auto dash = rs.find('-');
     if (dash != std::string::npos) {
         try {
-            if (dash > 0) r.start = std::stoll(rs.substr(0, dash));
-            if (dash + 1 < rs.size()) r.end = std::stoll(rs.substr(dash + 1));
+            if (dash > 0) {
+                r.start = std::stoll(rs.substr(0, dash));
+            } else {
+                r.is_suffix = true;
+            }
+            if (dash + 1 < rs.size()) {
+                r.end = std::stoll(rs.substr(dash + 1));
+            }
         } catch (...) {}
     }
     return r;
@@ -1373,7 +1385,7 @@ static bool serve_range(StreamEngine* s, TorrReader* reader, socket_t cli,
             // but using condition variable for zero-latency wakeup
             TB_LOG("serve_range: WAITING for piece=%d", p);
             std::unique_lock<std::mutex> lk(s->piece_mu);
-            bool ok = s->piece_cv.wait_for(lk, chr::seconds(60), [&] {
+            bool ok = s->piece_cv.wait_for(lk, chr::seconds(180), [&] {
                 return !s->active.load()
                     || s->seek_generation.load() != my_gen
                     || s->pieces_have.count(p) > 0;
@@ -1569,10 +1581,16 @@ static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
             RangeReq rr = parse_range(buf, total);
             int64_t rstart = (rr.valid && rr.start >= 0) ? rr.start : 0;
             int64_t rend   = (rr.valid && rr.end >= 0)   ? rr.end   : fsz - 1;
+
+            if (rr.valid && rr.is_suffix) {
+                rstart = fsz - rr.end; // rr.end holds the suffix length
+                rend = fsz - 1;
+            }
+
             rstart = std::clamp(rstart, (int64_t)0, fsz - 1);
             rend   = std::clamp(rend,   rstart,     fsz - 1);
             int64_t clen = rend - rstart + 1;
-            bool is_partial = (rr.valid && rr.start >= 0);
+            bool is_partial = (rr.valid && (rr.start >= 0 || rr.is_suffix));
 
             // seek detection — 1-to-1 port of TorrServer's seek path
             //
@@ -2066,7 +2084,18 @@ TORRENT_API lt_session_t lt_create_session(const char* iface, int dl, int ul) {
         sp.set_int (lt::settings_pack::recv_socket_buffer_size,   1024 * 1024);
         sp.set_int (lt::settings_pack::send_socket_buffer_size,   1024 * 1024);
 
-        auto* sw = new SessionWrapper(std::move(sp));
+        // Pin the disk I/O backend explicitly instead of trusting the 2.1.x
+        // default (pread_disk_io). The pread backend is new in 2.1.0 and has
+        // been observed to produce corrupt read-back on Android filesystems.
+        // Use posix on Android (most reliable per LibreTorrent findings),
+        // mmap on desktop (the proven 2.0.x default).
+        lt::session_params params(std::move(sp));
+#ifdef __ANDROID__
+        params.disk_io_constructor = lt::posix_disk_io_constructor;
+#else
+        params.disk_io_constructor = lt::mmap_disk_io_constructor;
+#endif
+        auto* sw = new SessionWrapper(std::move(params));
         sw->init_default_config();
         sw->start_alert_thread();
         set_err("");
@@ -2332,7 +2361,12 @@ TORRENT_API int lt_get_files(lt_session_t session, lt_torrent_id id,
     if (it == sw->handles.end() || !it->second.is_valid()) return 0;
     try {
         auto ti = it->second.torrent_file();
-        if (!ti) return 0;
+        if (!ti) {
+#ifdef __ANDROID__
+            __android_log_print(ANDROID_LOG_ERROR, "libtorrent_flutter", "lt_get_files: ti is null");
+#endif
+            return 0;
+        }
         const lt::file_storage& fs = ti->files();
         int n = 0;
         for (int i = 0; i < fs.num_files() && n < max; ++i, ++n) {
@@ -2346,8 +2380,21 @@ TORRENT_API int lt_get_files(lt_session_t session, lt_torrent_id id,
             out[n].name[sizeof(out[n].name) - 1] = 0;
             out[n].path[sizeof(out[n].path) - 1] = 0;
         }
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_INFO, "libtorrent_flutter", "lt_get_files: successfully processed %d files", n);
+#endif
         return n;
-    } catch (...) { return 0; }
+    } catch (const std::exception& e) {
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_ERROR, "libtorrent_flutter", "lt_get_files exception: %s", e.what());
+#endif
+        return 0;
+    } catch (...) {
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_ERROR, "libtorrent_flutter", "lt_get_files unknown exception");
+#endif
+        return 0;
+    }
 }
 
 TORRENT_API void lt_set_file_priorities(lt_session_t session, lt_torrent_id id,

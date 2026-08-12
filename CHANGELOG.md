@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0
+- **Android 16 Support (16 KB page sizes)**: Rebuilt Android prebuilt native libraries (`liblibtorrent_flutter.so`) with the `-Wl,-z,max-page-size=16384` linker flag to ensure compatibility with Android 16 (API 36+) devices and satisfy Google Play Console requirements.
+- **Fix Android "Failed to recognize file format"**: Fixed a critical bug in `parse_range` where suffix byte range requests (e.g., `Range: bytes=-500`) were incorrectly parsed as `start=0, end=500`. This caused the engine to serve the beginning of the file instead of the end, breaking metadata (moov atom / ID3) probing for media players like `media_kit` on Android.
+- **Pin disk I/O backend**: Pinned the libtorrent disk I/O backend to `posix_disk_io` on Android and `mmap_disk_io` on Desktop, overriding the new libtorrent 2.1.x `pread_disk_io` default which has known reliability issues on Android filesystems.
+- **Fix URL/MIME routing**: Appended filename to the stream URL path (instead of query parameters) and added missing MIME types to ensure proper format detection across all platforms.
+
 ## 1.9.9
 
 - **Fix Android ARM64 SEGV_ACCERR use-after-free in streaming**: `on_piece_read` now copies from libtorrent's alert buffer exactly once into a local vector, then populates both `read_results` and the piece cache from that safe copy. Previously it read the alert's `data` pointer twice — Android MTE detected the second access as a use-after-free (`SEGV_ACCERR`).
