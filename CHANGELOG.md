@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.1
+* Fix Windows CMake zip extraction path for prebuilt binaries.
+* Re-add 16KB page-size alignment for Android native libraries (Play Console compatibility).
+
 ## 1.9.2
 
 - Reverted to stable libtorrent 1.8.5 baseline (stability and CI fixes).
